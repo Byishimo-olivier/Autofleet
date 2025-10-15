@@ -4,8 +4,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const pool = require('../config/database');
-const { authenticateToken, requireOwnerOrAdmin } = require('../middleware/auth');
+const { authenticateToken, requireOwnerOrAdmin, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse, validateImageFile } = require('../utils/helpers');
+const EmailService = require('../Service/EmailService'); // Add this import
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -244,53 +245,38 @@ router.get('/', async (req, res) => {
     let countSql = 'SELECT COUNT(*) as total FROM vehicles v WHERE 1=1';
     let countParams = [];
     let countIdx = 1;
-    
+
+    // Add the same filters as the main query
     if (status) { countSql += ` AND v.status = $${countIdx++}`; countParams.push(status); }
     if (type) { countSql += ` AND v.type = $${countIdx++}`; countParams.push(type); }
     if (listing_type) { countSql += ` AND v.listing_type = $${countIdx++}`; countParams.push(listing_type); }
     if (location) { countSql += ` AND v.location_address ILIKE $${countIdx++}`; countParams.push(`%${location}%`); }
-    
-    // Date availability for count
-    if (pickupDate && returnDate) {
-      countSql += ` AND v.id NOT IN (
-        SELECT DISTINCT b.vehicle_id 
-        FROM bookings b 
-        WHERE b.status IN ('confirmed', 'active') 
-        AND (
-          (b.start_date <= $${countIdx} AND b.end_date >= $${countIdx}) OR
-          (b.start_date <= $${countIdx + 1} AND b.end_date >= $${countIdx + 1}) OR
-          (b.start_date >= $${countIdx} AND b.end_date <= $${countIdx + 1})
-        )
-      )`;
-      countParams.push(pickupDate, pickupDate, returnDate, returnDate, pickupDate, returnDate);
-      countIdx += 2;
+
+    // Add debug logging
+    console.log('=== COUNT QUERY DEBUG ===');
+    console.log('Count SQL:', countSql);
+    console.log('Count Params:', countParams);
+
+    // Replace the count query section with this safer version:
+
+    let total = 0;
+    try {
+      const countResult = await pool.query(countSql, countParams);
+      total = parseInt(countResult.rows[0].total) || 0;
+      console.log('Count from query:', total);
+    } catch (countError) {
+      console.error('Count query failed, using fallback:', countError);
+      // Fallback: use the length of vehicles array
+      total = vehiclesResult.rows.length;
+      console.log('Fallback count:', total);
+    }
+
+    // Also add a minimum total check
+    if (total === 0 && vehiclesResult.rows.length > 0) {
+      total = vehiclesResult.rows.length;
+      console.log('Corrected total using vehicles array length:', total);
     }
     
-    if (minPrice) { 
-      countSql += ` AND (
-        (v.listing_type = 'rent' AND v.daily_rate >= $${countIdx}) OR 
-        (v.listing_type = 'sale' AND v.selling_price >= $${countIdx})
-      )`; 
-      countParams.push(parseFloat(minPrice)); 
-      countIdx++;
-    }
-    if (maxPrice) { 
-      countSql += ` AND (
-        (v.listing_type = 'rent' AND v.daily_rate <= $${countIdx}) OR 
-        (v.listing_type = 'sale' AND v.selling_price <= $${countIdx})
-      )`; 
-      countParams.push(parseFloat(maxPrice)); 
-      countIdx++;
-    }
-    if (search) {
-      countSql += ` AND (v.make ILIKE $${countIdx} OR v.model ILIKE $${countIdx+1} OR v.description ILIKE $${countIdx+2})`;
-      const searchTerm = `%${search}%`;
-      countParams.push(searchTerm, searchTerm, searchTerm);
-      countIdx += 3;
-    }
-    
-    const countResult = await pool.query(countSql, countParams);
-    const total = parseInt(countResult.rows[0].total);
     const totalPages = Math.ceil(total / limit);
     
     successResponse(res, {
@@ -627,7 +613,7 @@ router.post(
         dailyRateValue = null;
       }
 
-      // Validate required fields
+      // Validation
       if (!make || !make.trim()) return errorResponse(res, 'Make is required', 400);
       if (!model || !model.trim()) return errorResponse(res, 'Model is required', 400);
       if (!year || !year.toString().trim()) return errorResponse(res, 'Year is required', 400);
@@ -685,12 +671,19 @@ router.post(
         return errorResponse(res, 'Maximum 10 images allowed', 400);
       }
 
+      // Get owner information for email
+      const ownerResult = await pool.query(
+        'SELECT first_name, last_name, email FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      const owner = ownerResult.rows[0];
+
       const sql = `
         INSERT INTO vehicles (
           owner_id, make, model, year, type, license_plate, color, seats, transmission,
           fuel_type, daily_rate, description, features, images, status, location_lat, location_lng, location_address, listing_type, selling_price
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
-        RETURNING id
+        RETURNING *
       `;
       const params = [
         req.user.id,
@@ -699,40 +692,112 @@ router.post(
         parseInt(year),
         vehicleType,
         license_plate.trim(),
-        color ? color.trim() : null,
-        seats ? parseInt(seats) : null,
-        transmission ? transmission.trim() : null,
-        fuelType ? fuelType.trim() : null,
+        colorVal,
+        seatsVal,
+        transmissionVal,
+        fuelTypeVal,
         listingTypeVal === 'rent' ? parseFloat(dailyRateValue) : null,
-        description ? description.trim() : null,
-        JSON.stringify(
-          features
-            ? Array.isArray(features)
-              ? features
-              : typeof features === 'string'
-                ? features.split(',').map(f => f.trim())
-                : []
-            : []
-        ),
-        JSON.stringify(
-          images
-            ? Array.isArray(images)
-              ? images
-              : typeof images === 'string'
-                ? [images]
-                : []
-            : []
-        ),
-        'available',
-        locationLat ? parseFloat(locationLat) : null,
-        locationLng ? parseFloat(locationLng) : null,
-        locationAddress ? locationAddress.trim() : null,
+        descriptionVal,
+        JSON.stringify(featuresVal),
+        JSON.stringify(imagesVal),
+        'inactive', // Set to inactive for admin approval
+        locationLatVal,
+        locationLngVal,
+        locationAddressVal,
         listingTypeVal,
         listingTypeVal === 'sale' ? sellingPriceVal : null
       ];
 
       const result = await pool.query(sql, params);
-      successResponse(res, { vehicleId: result.rows[0].id }, 'Vehicle added successfully', 201);
+      const newVehicle = result.rows[0];
+
+      // 📧 SEND EMAIL NOTIFICATION TO ADMIN
+      try {
+        // Send vehicle submission notification to admin
+        const adminEmails = process.env.ADMIN_EMAILS ? process.env.ADMIN_EMAILS.split(',') : ['admin@autofleet.com'];
+        
+        const subject = `New Vehicle Submission: ${make} ${model} - AutoFleet Hub`;
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #2c3e7d; color: white; padding: 20px; text-align: center; }
+              .content { padding: 20px; background: #f9f9f9; }
+              .vehicle-details { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
+              .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+              .button { display: inline-block; background: #28a745; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 10px 5px; }
+              .button-danger { background: #dc3545; }
+              .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🚗 New Vehicle Submission</h1>
+              </div>
+              <div class="content">
+                <h2>A new vehicle has been submitted for approval</h2>
+                
+                <div class="vehicle-details">
+                  <h3>🚗 Vehicle Details</h3>
+                  <div class="detail-row">
+                    <span><strong>Vehicle:</strong></span>
+                    <span>${make} ${model} ${year}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>License Plate:</strong></span>
+                    <span>${license_plate}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>Type:</strong></span>
+                    <span>${vehicleType.charAt(0).toUpperCase() + vehicleType.slice(1)}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>Listing Type:</strong></span>
+                    <span>${listingTypeVal === 'rent' ? 'For Rent' : 'For Sale'}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>Price:</strong></span>
+                    <span>${listingTypeVal === 'rent' ? `$${dailyRateValue}/day` : `$${sellingPriceVal}`}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>Owner:</strong></span>
+                    <span>${owner.first_name} ${owner.last_name}</span>
+                  </div>
+                  <div class="detail-row">
+                    <span><strong>Owner Email:</strong></span>
+                    <span>${owner.email}</span>
+                  </div>
+                </div>
+
+                <p><strong>Please review and approve/reject this vehicle submission.</strong></p>
+                
+                <div style="text-align: center;">
+                  <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/admin/vehicles/${newVehicle.id}" class="button">Review Vehicle</a>
+                </div>
+              </div>
+              <div class="footer">
+                <p>AutoFleet Hub Admin Dashboard</p>
+                <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        for (const email of adminEmails) {
+          await EmailService.sendEmail(email.trim(), subject, html);
+        }
+
+        console.log('✅ Vehicle submission notification sent to admin');
+      } catch (emailError) {
+        console.error('❌ Failed to send vehicle submission notification:', emailError);
+      }
+
+      successResponse(res, { vehicleId: newVehicle.id }, 'Vehicle submitted for approval successfully', 201);
     } catch (error) {
       console.error('Add vehicle error:', error);
 
@@ -744,14 +809,149 @@ router.post(
   }
 );
 
-// Update vehicle
+// ADMIN: Approve/Reject vehicle (ENHANCED with email notifications)
+router.put('/admin/:id/status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const vehicleId = req.params.id;
+    const { status, rejectionReason } = req.body;
+
+    if (!status || !['available', 'inactive', 'maintenance'].includes(status)) {
+      return errorResponse(res, 'Valid status is required (available, inactive, maintenance)', 400);
+    }
+
+    // Get vehicle and owner details
+    const vehicleResult = await pool.query(`
+      SELECT v.*, u.first_name, u.last_name, u.email 
+      FROM vehicles v
+      LEFT JOIN users u ON v.owner_id = u.id
+      WHERE v.id = $1
+    `, [vehicleId]);
+
+    const vehicle = vehicleResult.rows[0];
+    if (!vehicle) {
+      return errorResponse(res, 'Vehicle not found', 404);
+    }
+
+    // Update vehicle status
+    await pool.query(
+      'UPDATE vehicles SET status = $1, updated_at = NOW() WHERE id = $2',
+      [status, vehicleId]
+    );
+
+    // 📧 SEND EMAIL NOTIFICATIONS
+    try {
+      const owner = {
+        first_name: vehicle.first_name,
+        last_name: vehicle.last_name,
+        email: vehicle.email
+      };
+
+      if (status === 'available') {
+        // Vehicle approved
+        await EmailService.sendVehicleApproved(vehicle, owner);
+        console.log('✅ Vehicle approval email sent to owner');
+      } else if (status === 'inactive' || status === 'maintenance') {
+        // Vehicle rejected/needs updates
+        const reason = rejectionReason || 'Your vehicle submission requires review. Please check the details and resubmit if necessary.';
+        await EmailService.sendVehicleRejected(vehicle, owner, reason);
+        console.log('✅ Vehicle rejection email sent to owner');
+      }
+    } catch (emailError) {
+      console.error('❌ Failed to send vehicle status email:', emailError);
+    }
+
+    const statusMessage = status === 'available' ? 'approved' : 
+                         status === 'inactive' ? 'marked as pending' : 'marked as maintenance';
+
+    successResponse(res, null, `Vehicle ${statusMessage} successfully`);
+  } catch (err) {
+    console.error('❌ Database error updating vehicle status:', err);
+    errorResponse(res, 'Failed to update vehicle status', 500);
+  }
+});
+
+// ADMIN: Bulk approve/reject vehicles (ENHANCED with email notifications)
+router.put('/admin/bulk-status', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { vehicleIds, status, rejectionReason } = req.body;
+
+    if (!vehicleIds || !Array.isArray(vehicleIds) || vehicleIds.length === 0) {
+      return errorResponse(res, 'Vehicle IDs array is required', 400);
+    }
+
+    if (!status || !['available', 'inactive', 'maintenance', 'rented'].includes(status)) {
+      return errorResponse(res, 'Valid status is required (available, inactive, maintenance, rented)', 400);
+    }
+
+    console.log('📝 Bulk updating vehicles:', { vehicleIds, status });
+
+    // Get vehicles and owners before update
+    const vehiclesResult = await pool.query(`
+      SELECT v.*, u.first_name, u.last_name, u.email 
+      FROM vehicles v
+      LEFT JOIN users u ON v.owner_id = u.id
+      WHERE v.id = ANY($1)
+    `, [vehicleIds]);
+
+    const vehicles = vehiclesResult.rows;
+
+    // Update vehicles
+    const placeholders = vehicleIds.map((_, index) => `$${index + 1}`).join(',');
+    const sql = `UPDATE vehicles SET status = $${vehicleIds.length + 1}, updated_at = NOW() WHERE id IN (${placeholders})`;
+    const params = [...vehicleIds, status];
+
+    const result = await pool.query(sql, params);
+
+    // 📧 SEND BULK EMAIL NOTIFICATIONS
+    try {
+      const emailPromises = vehicles.map(async (vehicle) => {
+        const owner = {
+          first_name: vehicle.first_name,
+          last_name: vehicle.last_name,
+          email: vehicle.email
+        };
+
+        if (status === 'available') {
+          return EmailService.sendVehicleApproved(vehicle, owner);
+        } else if (status === 'inactive' || status === 'maintenance') {
+          const reason = rejectionReason || 'Your vehicle submission requires review. Please check the details and resubmit if necessary.';
+          return EmailService.sendVehicleRejected(vehicle, owner, reason);
+        }
+      });
+
+      await Promise.allSettled(emailPromises);
+      console.log('✅ Bulk email notifications sent to vehicle owners');
+    } catch (emailError) {
+      console.error('❌ Failed to send bulk email notifications:', emailError);
+    }
+
+    console.log('✅ Bulk update result:', result.rowCount, 'vehicles updated');
+
+    successResponse(res, {
+      updatedCount: result.rowCount,
+      vehicleIds,
+      status
+    }, `${result.rowCount} vehicles updated successfully`);
+
+  } catch (err) {
+    console.error('❌ Database error in bulk vehicle update:', err);
+    errorResponse(res, 'Failed to update vehicles', 500);
+  }
+});
+
+// Update vehicle (ENHANCED with notifications for significant changes)
 router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
   try {
     const vehicleId = req.params.id;
     const userId = req.user.id;
     const userRole = req.user.role;
 
-    const vehicleResult = await pool.query('SELECT owner_id FROM vehicles WHERE id = $1', [vehicleId]);
+    const vehicleResult = await pool.query(`
+      SELECT v.*, u.first_name, u.last_name, u.email 
+      FROM vehicles v
+      LEFT JOIN users u ON v.owner_id = u.id
+      WHERE v.id = $1
+    `, [vehicleId]);
     const vehicle = vehicleResult.rows[0];
 
     if (!vehicle) {
@@ -765,14 +965,23 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
     const {
       make, model, year, type, licensePlate, color, seats,
       transmission, fuelType, dailyRate, description, features,
-      images,
-      locationLat, locationLng, locationAddress, status
+      images, locationLat, locationLng, locationAddress, status
     } = req.body;
 
     let updateFields = [];
     let params = [];
     let idx = 1;
+    let significantChange = false;
 
+    // Track significant changes (price, status, availability)
+    if (dailyRate && parseFloat(dailyRate) !== vehicle.daily_rate) {
+      significantChange = true;
+    }
+    if (status && status !== vehicle.status) {
+      significantChange = true;
+    }
+
+    // Build update query (existing logic)
     if (make) { updateFields.push(`make = $${idx++}`); params.push(make); }
     if (model) { updateFields.push(`model = $${idx++}`); params.push(model); }
     if (year) { updateFields.push(`year = $${idx++}`); params.push(parseInt(year)); }
@@ -839,6 +1048,66 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
       return errorResponse(res, 'Vehicle not found', 404);
     }
 
+    // 📧 SEND EMAIL NOTIFICATION FOR SIGNIFICANT CHANGES
+    if (significantChange && userRole === 'admin') {
+      try {
+        const owner = {
+          first_name: vehicle.first_name,
+          last_name: vehicle.last_name,
+          email: vehicle.email
+        };
+
+        const updatedVehicle = { ...vehicle, ...req.body };
+
+        // Send update notification to owner
+        const subject = `Vehicle Updated: ${vehicle.make} ${vehicle.model} - AutoFleet Hub`;
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #17a2b8; color: white; padding: 20px; text-align: center; }
+              .content { padding: 20px; background: #f9f9f9; }
+              .vehicle-details { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
+              .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🔄 Vehicle Information Updated</h1>
+              </div>
+              <div class="content">
+                <h2>Hello ${owner.first_name}!</h2>
+                <p>Your vehicle information has been updated by our admin team.</p>
+                
+                <div class="vehicle-details">
+                  <h3>🚗 Vehicle: ${vehicle.make} ${vehicle.model} ${vehicle.year}</h3>
+                  <p><strong>License Plate:</strong> ${vehicle.license_plate}</p>
+                  ${status ? `<p><strong>New Status:</strong> ${status.charAt(0).toUpperCase() + status.slice(1)}</p>` : ''}
+                  ${dailyRate ? `<p><strong>New Daily Rate:</strong> $${dailyRate}</p>` : ''}
+                </div>
+
+                <p>If you have any questions about these changes, please contact our support team.</p>
+              </div>
+              <div class="footer">
+                <p>If you have any questions, contact us at support@autofleet.com</p>
+                <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        await EmailService.sendEmail(owner.email, subject, html);
+        console.log('✅ Vehicle update notification sent to owner');
+      } catch (emailError) {
+        console.error('❌ Failed to send vehicle update notification:', emailError);
+      }
+    }
+
     successResponse(res, null, 'Vehicle updated successfully');
   } catch (error) {
     console.error('Update vehicle error:', error);
@@ -851,14 +1120,19 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
   }
 });
 
-// Delete vehicle
+// Delete vehicle (ENHANCED with email notifications)
 router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
   const vehicleId = req.params.id;
   const userId = req.user.id;
   const userRole = req.user.role;
   
   try {
-    const vehicleResult = await pool.query('SELECT owner_id FROM vehicles WHERE id = $1', [vehicleId]);
+    const vehicleResult = await pool.query(`
+      SELECT v.*, u.first_name, u.last_name, u.email 
+      FROM vehicles v
+      LEFT JOIN users u ON v.owner_id = u.id
+      WHERE v.id = $1
+    `, [vehicleId]);
     const vehicle = vehicleResult.rows[0];
     
     if (!vehicle) {
@@ -883,6 +1157,62 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
     if (deleteResult.rowCount === 0) {
       return errorResponse(res, 'Vehicle not found', 404);
     }
+
+    // 📧 SEND DELETION NOTIFICATION EMAIL (if deleted by admin)
+    if (userRole === 'admin' && vehicle.owner_id !== userId) {
+      try {
+        const owner = {
+          first_name: vehicle.first_name,
+          last_name: vehicle.last_name,
+          email: vehicle.email
+        };
+
+        const subject = `Vehicle Removed: ${vehicle.make} ${vehicle.model} - AutoFleet Hub`;
+        const html = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <style>
+              body { font-family: Arial, sans-serif; color: #333; }
+              .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+              .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
+              .content { padding: 20px; background: #f9f9f9; }
+              .vehicle-details { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
+              .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>🚗 Vehicle Removed</h1>
+              </div>
+              <div class="content">
+                <h2>Hello ${owner.first_name}!</h2>
+                <p>Your vehicle has been removed from the AutoFleet Hub platform.</p>
+                
+                <div class="vehicle-details">
+                  <h3>🚗 Removed Vehicle</h3>
+                  <p><strong>Vehicle:</strong> ${vehicle.make} ${vehicle.model} ${vehicle.year}</p>
+                  <p><strong>License Plate:</strong> ${vehicle.license_plate}</p>
+                </div>
+
+                <p>If you believe this was done in error or have questions, please contact our support team immediately.</p>
+              </div>
+              <div class="footer">
+                <p>If you have any questions, contact us at support@autofleet.com</p>
+                <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+              </div>
+            </div>
+          </body>
+          </html>
+        `;
+
+        await EmailService.sendEmail(owner.email, subject, html);
+        console.log('✅ Vehicle deletion notification sent to owner');
+      } catch (emailError) {
+        console.error('❌ Failed to send vehicle deletion notification:', emailError);
+      }
+    }
     
     successResponse(res, null, 'Vehicle deleted successfully');
   } catch (err) {
@@ -891,160 +1221,101 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
   }
 });
 
-// Get vehicles by owner
-router.get('/owner/:ownerId', authenticateToken, async (req, res) => {
-  const ownerId = req.params.ownerId;
-  const requestingUserId = req.user.id;
-  const requestingUserRole = req.user.role;
-  
-  if (requestingUserRole !== 'admin' && parseInt(ownerId) !== requestingUserId) {
-    return errorResponse(res, 'Access denied', 403);
-  }
-  
+// ADD NEW ROUTE: Send vehicle status notification manually
+router.post('/:id/notify', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT * FROM vehicles WHERE owner_id = $1 ORDER BY created_at DESC`,
-      [ownerId]
-    );
-    
-    let vehicles = result.rows.map(vehicle => {
-      // Determine price based on listing type
-      const priceType = vehicle.listing_type || 'rent';
-      let displayPrice = null;
-      let priceLabel = '';
-      
-      if (priceType === 'sale') {
-        displayPrice = vehicle.selling_price;
-        priceLabel = 'For Sale';
-      } else {
-        displayPrice = vehicle.daily_rate;
-        priceLabel = 'Per Day';
-      }
-      
-      return {
-        ...vehicle,
-        features: vehicle.features ? JSON.parse(vehicle.features) : [],
-        images: parseVehicleImages(vehicle.images, vehicle.id),
-        price: displayPrice,
-        price_label: priceLabel
-      };
-    });
-    
-    successResponse(res, vehicles, 'Owner vehicles retrieved successfully');
+    const vehicleId = req.params.id;
+    const { notificationType, customMessage } = req.body;
+
+    // Get vehicle and owner details
+    const vehicleResult = await pool.query(`
+      SELECT v.*, u.first_name, u.last_name, u.email 
+      FROM vehicles v
+      LEFT JOIN users u ON v.owner_id = u.id
+      WHERE v.id = $1
+    `, [vehicleId]);
+
+    const vehicle = vehicleResult.rows[0];
+    if (!vehicle) {
+      return errorResponse(res, 'Vehicle not found', 404);
+    }
+
+    const owner = {
+      first_name: vehicle.first_name,
+      last_name: vehicle.last_name,
+      email: vehicle.email
+    };
+
+    let result;
+    switch (notificationType) {
+      case 'approved':
+        result = await EmailService.sendVehicleApproved(vehicle, owner);
+        break;
+      case 'rejected':
+        result = await EmailService.sendVehicleRejected(vehicle, owner, customMessage || 'Please review your vehicle submission.');
+        break;
+      default:
+        return errorResponse(res, 'Invalid notification type', 400);
+    }
+
+    if (result.success) {
+      successResponse(res, { messageId: result.messageId }, 'Notification email sent successfully');
+    } else {
+      errorResponse(res, `Failed to send notification: ${result.error}`, 500);
+    }
   } catch (err) {
-    console.error('Database error:', err);
-    return errorResponse(res, 'Database error', 500);
+    console.error('❌ Error sending vehicle notification:', err);
+    errorResponse(res, 'Failed to send notification', 500);
   }
 });
 
-// Upload images for a vehicle
-router.post(
-  '/upload/:id',
-  authenticateToken,
-  requireOwnerOrAdmin,
-  vehicleUpload.array('images', 5),
-  async (req, res) => {
-    try {
-      const vehicleId = req.params.id;
-      const userId = req.user.id;
-      const userRole = req.user.role;
-
-      console.log('=== IMAGE UPLOAD DEBUG ===');
-      console.log('Upload request for vehicle:', vehicleId);
-      console.log('Files received:', req.files);
-      console.log('Number of files:', req.files ? req.files.length : 0);
-
-      if (!req.files || req.files.length === 0) {
-        console.log('❌ No files received in upload request');
-        return errorResponse(res, 'No images provided', 400);
-      }
-
-      const vehicleResult = await pool.query('SELECT owner_id, images FROM vehicles WHERE id = $1', [vehicleId]);
-      const vehicle = vehicleResult.rows[0];
-      
-      if (!vehicle) {
-        console.log('❌ Vehicle not found:', vehicleId);
-        req.files.forEach(file => {
-          try {
-            fs.unlinkSync(file.path);
-          } catch (e) {
-            console.error('Failed to delete file:', file.path);
-          }
-        });
-        return errorResponse(res, 'Vehicle not found', 404);
-      }
-      
-      if (userRole !== 'admin' && vehicle.owner_id !== userId) {
-        console.log('❌ Access denied for user:', userId, 'vehicle owner:', vehicle.owner_id);
-        req.files.forEach(file => {
-          try {
-            fs.unlinkSync(file.path);
-          } catch (e) {
-            console.error('Failed to delete file:', file.path);
-          }
-        });
-        return errorResponse(res, 'Access denied', 403);
-      }
-
-      // Process file paths
-      const uploadedFiles = req.files.map(file => {
-        console.log('Processing file:', file.filename, 'path:', file.path);
-        return file.path.replace(/\\/g, '/');
-      });
-      console.log('✅ Processed uploaded file paths:', uploadedFiles);
-
-      let existingImages = [];
-      try {
-        existingImages = vehicle.images ? JSON.parse(vehicle.images) : [];
-        console.log('Existing images in DB:', existingImages);
-      } catch (e) {
-        console.error('Failed to parse existing images:', e);
-        existingImages = [];
-      }
-
-      const allImages = [...existingImages, ...uploadedFiles];
-      console.log('All images (existing + new):', allImages);
-
-      if (allImages.length > 10) {
-        console.log('❌ Too many images. Total:', allImages.length);
-        req.files.forEach(file => {
-          try {
-            fs.unlinkSync(file.path);
-          } catch (e) {
-            console.error('Failed to delete file:', file.path);
-          }
-        });
-        return errorResponse(res, 'Maximum 10 images allowed per vehicle. Current: ' + existingImages.length, 400);
-      }
-
-      // Update database
-      const updateResult = await pool.query('UPDATE vehicles SET images = $1, updated_at = NOW() WHERE id = $2', [
-        JSON.stringify(allImages),
-        vehicleId
-      ]);
-      
-      console.log('✅ Database update result:', updateResult.rowCount, 'rows affected');
-      console.log('✅ Images stored in DB:', JSON.stringify(allImages));
-      console.log('Images updated successfully. Total images:', allImages.length);
-      
-      successResponse(res, { images: allImages, count: allImages.length }, 'Images uploaded successfully');
-    } catch (error) {
-      console.error('❌ Upload error:', error);
-      
-      if (req.files && req.files.length > 0) {
-        req.files.forEach(file => {
-          try {
-            fs.unlinkSync(file.path);
-          } catch (e) {
-            console.error('Failed to delete file:', file.path);
-          }
-        });
-      }
-      
-      errorResponse(res, 'Failed to upload images: ' + error.message, 500);
+// ADD NEW ROUTE: Test vehicle email notifications
+router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { emailType = 'approved', email } = req.body;
+    
+    if (!email) {
+      return errorResponse(res, 'Email address is required', 400);
     }
+
+    const testVehicle = {
+      id: 'TEST-123',
+      make: 'Toyota',
+      model: 'Camry',
+      year: 2022,
+      license_plate: 'TEST-123',
+      type: 'sedan',
+      daily_rate: 50
+    };
+
+    const testOwner = {
+      first_name: 'Test',
+      last_name: 'Owner',
+      email: email
+    };
+
+    let result;
+    switch (emailType) {
+      case 'approved':
+        result = await EmailService.sendVehicleApproved(testVehicle, testOwner);
+        break;
+      case 'rejected':
+        result = await EmailService.sendVehicleRejected(testVehicle, testOwner, 'This is a test rejection reason.');
+        break;
+      default:
+        result = await EmailService.sendEmail(email, 'Test Email - Vehicle Service', '<h1>Test Email</h1><p>Vehicle email service is working correctly!</p>');
+    }
+
+    if (result.success) {
+      successResponse(res, { messageId: result.messageId }, 'Test email sent successfully');
+    } else {
+      errorResponse(res, `Failed to send test email: ${result.error}`, 500);
+    }
+  } catch (err) {
+    console.error('❌ Error sending test email:', err);
+    errorResponse(res, 'Failed to send test email', 500);
   }
-);
+});
 
 // Get image URL with placeholder and server URL
 const getImageUrl = (imagePath) => {

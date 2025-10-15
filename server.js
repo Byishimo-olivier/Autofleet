@@ -45,6 +45,14 @@ try {
 
   console.log("Loading /api/analytics...");
   app.use('/api/analytics', require('./routes/analytics'));
+  console.log("Loading /api/support...");
+  app.use('/api/support', require('./routes/support'));
+
+  app.use('/api/report', require('./routes/ReportsAnalytics'));
+  console.log("Loading /api/report&analytics...");
+
+  const reportsRoutes = require('./routes/ReportsAnalytics');
+  app.use('/api/reports', reportsRoutes);
 
   console.log("Loading /api/notifications...");
   app.use('/api/notifications', require('./routes/notifications'));
