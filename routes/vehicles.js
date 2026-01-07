@@ -6,7 +6,8 @@ const fs = require('fs');
 const pool = require('../config/database');
 const { authenticateToken, requireOwnerOrAdmin, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse, validateImageFile } = require('../utils/helpers');
-const EmailService = require('../Service/EmailService'); // Add this import
+const EmailService = require('../Service/EmailService');
+const emailService = new EmailService();
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -536,15 +537,12 @@ router.get('/:id', async (req, res) => {
     
     try {
       vehicle.features = vehicle.features ? JSON.parse(vehicle.features) : [];
-      
       // Use helper function to parse images
       vehicle.images = parseVehicleImages(vehicle.images, vehicleId);
-      
       // Add price information based on listing type
       const priceType = vehicle.listing_type || 'rent';
       let displayPrice = null;
       let priceLabel = '';
-      
       if (priceType === 'sale') {
         displayPrice = vehicle.selling_price;
         priceLabel = 'For Sale';
@@ -552,16 +550,22 @@ router.get('/:id', async (req, res) => {
         displayPrice = vehicle.daily_rate;
         priceLabel = 'Per Day';
       }
-      
       vehicle.price = displayPrice;
       vehicle.price_label = priceLabel;
-      
     } catch (e) {
       console.log('Failed to parse vehicle data:', e.message);
       vehicle.features = [];
       vehicle.images = [];
     }
-    
+    // FIX: Add GPS coordinates BEFORE sending response
+    vehicle.locationLat = vehicle.location_lat;
+    vehicle.locationLng = vehicle.location_lng;
+    vehicle.locationAddress = vehicle.location_address;
+    console.log('=== VEHICLE GPS DEBUG ===');
+    console.log('vehicle.location_lat:', vehicle.location_lat);
+    console.log('vehicle.location_lng:', vehicle.location_lng);
+    console.log('vehicle.locationLat:', vehicle.locationLat);
+    console.log('vehicle.locationLng:', vehicle.locationLng);
     successResponse(res, vehicle, 'Vehicle retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -663,8 +667,8 @@ router.post(
             ? [images]
             : []
         : [];
-      const locationLatVal = locationLat ? parseFloat(locationLat) : null;
-      const locationLngVal = locationLng ? parseFloat(locationLng) : null;
+      const locationLatVal = locationLat !== undefined && locationLat !== null ? parseFloat(locationLat) : null;
+      const locationLngVal = locationLng !== undefined && locationLng !== null ? parseFloat(locationLng) : null;
       const locationAddressVal = locationAddress ? locationAddress.trim() : null;
 
       if (imagesVal.length > 10) {
@@ -677,6 +681,8 @@ router.post(
         [req.user.id]
       );
       const owner = ownerResult.rows[0];
+
+      const statusVal = (listingTypeVal === 'sale') ? 'available' : 'inactive';
 
       const sql = `
         INSERT INTO vehicles (
@@ -700,7 +706,7 @@ router.post(
         descriptionVal,
         JSON.stringify(featuresVal),
         JSON.stringify(imagesVal),
-        'inactive', // Set to inactive for admin approval
+        statusVal, // <-- FIXED LINE
         locationLatVal,
         locationLngVal,
         locationAddressVal,
@@ -789,7 +795,7 @@ router.post(
         `;
 
         for (const email of adminEmails) {
-          await EmailService.sendEmail(email.trim(), subject, html);
+          await emailService.sendEmail(email.trim(), subject, html);
         }
 
         console.log('✅ Vehicle submission notification sent to admin');
@@ -848,12 +854,12 @@ router.put('/admin/:id/status', authenticateToken, requireAdmin, async (req, res
 
       if (status === 'available') {
         // Vehicle approved
-        await EmailService.sendVehicleApproved(vehicle, owner);
+        await emailService.sendVehicleApproved(vehicle, owner);
         console.log('✅ Vehicle approval email sent to owner');
       } else if (status === 'inactive' || status === 'maintenance') {
         // Vehicle rejected/needs updates
         const reason = rejectionReason || 'Your vehicle submission requires review. Please check the details and resubmit if necessary.';
-        await EmailService.sendVehicleRejected(vehicle, owner, reason);
+        await emailService.sendVehicleRejected(vehicle, owner, reason);
         console.log('✅ Vehicle rejection email sent to owner');
       }
     } catch (emailError) {
@@ -912,10 +918,10 @@ router.put('/admin/bulk-status', authenticateToken, requireAdmin, async (req, re
         };
 
         if (status === 'available') {
-          return EmailService.sendVehicleApproved(vehicle, owner);
+          return emailService.sendVehicleApproved(vehicle, owner);
         } else if (status === 'inactive' || status === 'maintenance') {
           const reason = rejectionReason || 'Your vehicle submission requires review. Please check the details and resubmit if necessary.';
-          return EmailService.sendVehicleRejected(vehicle, owner, reason);
+          return emailService.sendVehicleRejected(vehicle, owner, reason);
         }
       });
 
@@ -1101,7 +1107,7 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
           </html>
         `;
 
-        await EmailService.sendEmail(owner.email, subject, html);
+        await emailService.sendEmail(owner.email, subject, html);
         console.log('✅ Vehicle update notification sent to owner');
       } catch (emailError) {
         console.error('❌ Failed to send vehicle update notification:', emailError);
@@ -1207,7 +1213,7 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
           </html>
         `;
 
-        await EmailService.sendEmail(owner.email, subject, html);
+        await emailService.sendEmail(owner.email, subject, html);
         console.log('✅ Vehicle deletion notification sent to owner');
       } catch (emailError) {
         console.error('❌ Failed to send vehicle deletion notification:', emailError);
@@ -1220,6 +1226,7 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
     return errorResponse(res, 'Failed to delete vehicle', 500);
   }
 });
+
 
 // ADD NEW ROUTE: Send vehicle status notification manually
 router.post('/:id/notify', authenticateToken, requireAdmin, async (req, res) => {
@@ -1249,10 +1256,10 @@ router.post('/:id/notify', authenticateToken, requireAdmin, async (req, res) => 
     let result;
     switch (notificationType) {
       case 'approved':
-        result = await EmailService.sendVehicleApproved(vehicle, owner);
+        result = await emailService.sendVehicleApproved(vehicle, owner);
         break;
       case 'rejected':
-        result = await EmailService.sendVehicleRejected(vehicle, owner, customMessage || 'Please review your vehicle submission.');
+        result = await emailService.sendVehicleRejected(vehicle, owner, customMessage || 'Please review your vehicle submission.');
         break;
       default:
         return errorResponse(res, 'Invalid notification type', 400);
@@ -1297,13 +1304,13 @@ router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => 
     let result;
     switch (emailType) {
       case 'approved':
-        result = await EmailService.sendVehicleApproved(testVehicle, testOwner);
+        result = await emailService.sendVehicleApproved(testVehicle, testOwner);
         break;
       case 'rejected':
-        result = await EmailService.sendVehicleRejected(testVehicle, testOwner, 'This is a test rejection reason.');
+        result = await emailService.sendVehicleRejected(testVehicle, testOwner, 'This is a test rejection reason.');
         break;
       default:
-        result = await EmailService.sendEmail(email, 'Test Email - Vehicle Service', '<h1>Test Email</h1><p>Vehicle email service is working correctly!</p>');
+        result = await emailService.sendEmail(email, 'Test Email - Vehicle Service', '<h1>Test Email</h1><p>Vehicle email service is working correctly!</p>');
     }
 
     if (result.success) {
