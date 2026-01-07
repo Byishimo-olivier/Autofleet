@@ -11,7 +11,6 @@ const PORT = process.env.PORT || 5000;
 // Middleware
 // ----------------------
 app.use(cors());
-app.use(express.json()); // <-- Suggested change: Add express.json() middleware
 
 // Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -23,36 +22,57 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // BEFORE applying body parsers. This prevents bodyParser from consuming 
 // the request body before multer can parse the multipart data.
 try {
+
+  // Load file-upload route before body parsers
+
+  console.log("Loading /api/vehicle-images...");
+  app.use('/api/vehicle-images', require('./routes/vehicles-upload'));
+  console.log("Registered /api/vehicle-images");
+
+  // Apply body parsers after file-upload route
+
+  app.use(express.json());
+  console.log("Registered express.json()");
+  app.use(bodyParser.json());
+  console.log("Registered bodyParser.json()");
+  app.use(bodyParser.urlencoded({ extended: true }));
+  console.log("Registered bodyParser.urlencoded()");
+
+  // Load main vehicles router (all other vehicle routes)
   console.log("Loading /api/vehicles...");
   app.use('/api/vehicles', require('./routes/vehicles'));
-
-  // NOW apply body parsers for JSON and URL-encoded data
-  // These will only affect routes loaded AFTER this point
-  app.use(bodyParser.json());
-  app.use(bodyParser.urlencoded({ extended: true }));
+  console.log("Registered /api/vehicles");
 
   console.log("Loading /api/auth...");
   app.use('/api/auth', require('./routes/auth'));
+  console.log("Registered /api/auth");
 
   console.log("Loading /api/users...");
   app.use('/api/users', require('./routes/users'));
+  console.log("Registered /api/users");
 
   console.log("Loading /api/bookings...");
   app.use('/api/bookings', require('./routes/bookings'));
+  console.log("Registered /api/bookings");
 
   console.log("Loading /api/feedback...");
   app.use('/api/feedback', require('./routes/feedback'));
+  console.log("Registered /api/feedback");
+
 
   console.log("Loading /api/analytics...");
   app.use('/api/analytics', require('./routes/analytics'));
+  console.log("Registered /api/analytics");
   console.log("Loading /api/support...");
   app.use('/api/support', require('./routes/support'));
+  console.log("Registered /api/support");
 
   app.use('/api/report', require('./routes/ReportsAnalytics'));
-  console.log("Loading /api/report&analytics...");
+  console.log("Registered /api/report");
 
   const reportsRoutes = require('./routes/ReportsAnalytics');
   app.use('/api/reports', reportsRoutes);
+  console.log("Registered /api/reports");
 
   console.log("Loading /api/notifications...");
   app.use('/api/notifications', require('./routes/notifications'));

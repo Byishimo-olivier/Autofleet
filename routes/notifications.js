@@ -165,22 +165,33 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // Send bulk notifications (admin only)
 router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
   try {
-    const { userIds, type, title, message, sendEmail: shouldSendEmail = false } = req.body;
-    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
-      return errorResponse(res, 'User IDs array is required', 400);
+    let { userIds, role, type, title, message, sendEmail: shouldSendEmail = false } = req.body;
+
+    // If role is provided, get user IDs by role
+    if (role) {
+      let roleValue = role === "owners" ? "owner" : "customer";
+      const usersResult = await pool.query('SELECT id, email FROM users WHERE role = $1', [roleValue]);
+      userIds = usersResult.rows.map(u => u.id);
+      var emails = usersResult.rows.map(u => u.email);
+    } else {
+      if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+        return errorResponse(res, 'User IDs array is required', 400);
+      }
+      emails = [];
+      if (shouldSendEmail) {
+        const placeholders = userIds.map((_, i) => `$${i + 1}`).join(',');
+        const emailResult = await pool.query(`SELECT email FROM users WHERE id IN (${placeholders})`, userIds);
+        emails = emailResult.rows.map(u => u.email);
+      }
     }
+
     if (!type || !title || !message) {
       return errorResponse(res, 'Type, title, and message are required', 400);
     }
     if (!['booking', 'payment', 'reminder', 'system'].includes(type)) {
       return errorResponse(res, 'Invalid notification type', 400);
     }
-    let emails = [];
-    if (shouldSendEmail) {
-      const placeholders = userIds.map((_, i) => `$${i + 1}`).join(',');
-      const emailResult = await pool.query(`SELECT email FROM users WHERE id IN (${placeholders})`, userIds);
-      emails = emailResult.rows.map(u => u.email);
-    }
+
     // Insert notifications
     const insertPromises = userIds.map(userId =>
       pool.query(
@@ -189,6 +200,7 @@ router.post('/bulk', authenticateToken, requireAdmin, async (req, res) => {
       ).then(result => result.rows[0].id)
     );
     const notificationIds = await Promise.all(insertPromises);
+
     // Send emails if requested
     if (shouldSendEmail && emails.length > 0) {
       const emailHtml = `

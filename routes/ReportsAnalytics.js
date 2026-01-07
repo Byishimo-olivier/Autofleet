@@ -662,6 +662,12 @@ router.get('/export', authenticateToken, requireAdmin, async (req, res) => {
     console.log('📤 Exporting reports:', { type, period, format });
 
     let data = {};
+    // Get user info for signature
+    const userSignature = req.user ? {
+      userId: req.user.id,
+      userName: req.user.first_name ? `${req.user.first_name} ${req.user.last_name}` : req.user.email,
+      userEmail: req.user.email
+    } : null;
 
     switch (type) {
       case 'summary':
@@ -766,7 +772,8 @@ router.get('/export', authenticateToken, requireAdmin, async (req, res) => {
           period,
           owner_id,
           exportDate: new Date().toISOString(),
-          format
+          format,
+          signedBy: userSignature
         }
       }, 'Reports exported successfully');
     }

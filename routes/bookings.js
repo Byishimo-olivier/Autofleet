@@ -170,7 +170,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
         case 'quarter':
           startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
           break;
-        default:
+        desfault:
           startDate = null;
       }
 
@@ -1495,6 +1495,54 @@ router.post('/test-booking-email', authenticateToken, requireAdmin, async (req, 
   } catch (err) {
     console.error('❌ Error sending test booking email:', err);
     errorResponse(res, 'Failed to send test email', 500);
+  }
+});
+
+// ADMIN: Notify all admins on new booking creation
+router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const { bookingId } = req.body;
+
+    if (!bookingId) {
+      return errorResponse(res, 'Booking ID is required', 400);
+    }
+
+    // Fetch the booking details
+    const { rows: bookingRows } = await pool.query(`
+      SELECT b.*, 
+             u.first_name as customer_first_name, u.last_name as customer_last_name, 
+             u.email as customer_email, u.phone as customer_phone,
+             v.make, v.model, v.year, v.license_plate, v.type, v.color
+      FROM bookings b
+      LEFT JOIN users u ON b.customer_id = u.id
+      LEFT JOIN vehicles v ON b.vehicle_id = v.id
+      WHERE b.id = $1
+    `, [bookingId]);
+
+    const booking = bookingRows[0];
+
+    if (!booking) {
+      return errorResponse(res, 'Booking not found', 404);
+    }
+
+    // Fetch admin users
+    const admins = await User.find({ role: 'admin' });
+
+    // Create notification for each admin
+    admins.forEach(async (admin) => {
+      await Notification.create({
+        userId: admin._id,
+        type: 'booking',
+        message: `A new booking has been created.`,
+        bookingId: booking._id,
+        // ...other fields as needed
+      });
+    });
+
+    successResponse(res, null, 'Admins notified about the new booking');
+  } catch (err) {
+    console.error('❌ Error notifying admins about new booking:', err);
+    errorResponse(res, 'Failed to notify admins', 500);
   }
 });
 

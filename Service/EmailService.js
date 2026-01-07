@@ -1356,8 +1356,6 @@ class EmailService {
     return await this.sendEmail(owner.email, subject, html);
   }
 
-  // Add these methods to your existing EmailService class (after your existing methods)
-
   // Send urgent support alert
   async sendUrgentSupportAlert(adminEmail, ticket, customer) {
     const subject = `🚨 URGENT Support Ticket: ${ticket.ticket_id} - Immediate Attention Required`;
@@ -1376,7 +1374,7 @@ class EmailService {
           .customer-info { background: #fff3cd; padding: 15px; border-radius: 5px; margin: 15px 0; }
           .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
           .description-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
-          .button { display: inline-block; background: #dc3545; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 5px; font-weight: bold; }
+          .button { display: inline-block; background: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
           .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
         </style>
       </head>
@@ -1388,7 +1386,7 @@ class EmailService {
           <div class="content">
             <div class="urgent-alert">
               <h2>⚠️ IMMEDIATE ATTENTION REQUIRED</h2>
-              <p><strong>An urgent support ticket has been submitted and requires immediate response!</strong></p>
+              <p>An urgent support ticket has been submitted and requires immediate response!</p>
               <p><strong>Expected Response Time: 1-2 Hours Maximum</strong></p>
             </div>
             
@@ -1460,7 +1458,7 @@ class EmailService {
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: #28a745; color: white; padding: 20px; text-align: center; }
           .content { padding: 20px; background: #f9f9f9; }
-          .response-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; border-left: 5px solid #28a745; }
+          .response-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
           .responder-info { background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 15px 0; }
           .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
           .message-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
@@ -1477,43 +1475,19 @@ class EmailService {
             <p>Great news! Our support team has responded to your ticket.</p>
             
             <div class="response-box">
-              <h3>📩 New Response</h3>
-              <div class="detail-row">
-                <span><strong>Ticket ID:</strong></span>
-                <span>${ticket.ticket_id}</span>
-              </div>
-              <div class="detail-row">
-                <span><strong>Subject:</strong></span>
-                <span>${ticket.subject}</span>
-              </div>
-              <div class="detail-row">
-                <span><strong>Response Time:</strong></span>
-                <span>${new Date().toLocaleString()}</span>
-              </div>
+              <h3>Response from ${responder.first_name} ${responder.last_name} (${responder.role})</h3>
+              <p><strong>Date:</strong> ${new Date().toLocaleString()}</p>
+              <hr>
+              <p>${response.message}</p>
             </div>
 
-            <div class="responder-info">
-              <h4>👨‍💼 Response from Support Team</h4>
-              <p><strong>Responder:</strong> ${ticket.responder_name}</p>
-            </div>
-            
-            <div class="message-box">
-              <strong>Support Team Response:</strong><br><br>
-              ${ticket.response_message}
-            </div>
+            <p><strong>Subject:</strong> ${ticket.subject}</p>
+            <p><strong>Current Status:</strong> ${ticket.status.charAt(0).toUpperCase() + ticket.status.slice(1)}</p>
 
-            <h3>📞 Next Steps</h3>
-            <ul>
-              <li>Review the response from our support team</li>
-              <li>Reply to this email if you need further assistance</li>
-              <li>Your ticket remains open until resolved</li>
-              <li>We'll continue to update you on any progress</li>
-            </ul>
-            
-            <p><strong>Need more help?</strong> Simply reply to this email or contact us at support@autofleet.com</p>
+            <p>You can reply to this ticket by logging into your account or replying to this email.</p>
           </div>
           <div class="footer">
-            <p>AutoFleet Hub Support Team</p>
+            <p>Reference your ticket with ID: ${ticket.ticket_id}</p>
             <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
           </div>
         </div>
@@ -1534,7 +1508,7 @@ class EmailService {
       <head>
         <style>
           body { font-family: Arial, sans-serif; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .container { max-width:  600px; margin: 0 auto; padding: 20px; }
           .header { background: #ffc107; color: #333; padding: 20px; text-align: center; }
           .content { padding: 20px; background: #f9f9f9; }
           .response-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; border-left: 5px solid #ffc107; }
@@ -1635,10 +1609,7 @@ class EmailService {
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: ${getStatusColor(ticket.new_status)}; color: white; padding: 20px; text-align: center; }
           .content { padding: 20px; background: #f9f9f9; }
-          .status-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; border-left: 5px solid ${getStatusColor(ticket.new_status)}; }
-          .status-change { display: flex; justify-content: center; align-items: center; margin: 15px 0; font-size: 18px; }
-          .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-          .resolution-box { background: #d4edda; padding: 15px; border-radius: 5px; margin: 15px 0; }
+          .status-change { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; text-align: center; }
           .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
         </style>
       </head>
@@ -1651,50 +1622,21 @@ class EmailService {
             <h2>Hello ${customer.first_name}!</h2>
             <p>The status of your support ticket has been updated.</p>
             
-            <div class="status-box">
-              <h3>📋 Ticket Information</h3>
-              <div class="detail-row">
-                <span><strong>Ticket ID:</strong></span>
-                <span>${ticket.ticket_id}</span>
-              </div>
-              <div class="detail-row">
-                <span><strong>Subject:</strong></span>
-                <span>${ticket.subject}</span>
-              </div>
-              
-              <div class="status-change">
-                <span>${ticket.old_status.charAt(0).toUpperCase() + ticket.old_status.slice(1)}</span>
-                <span style="margin: 0 15px;">→</span>
-                <span style="color: ${getStatusColor(ticket.new_status)}; font-weight: bold;">${getStatusIcon(ticket.new_status)} ${ticket.new_status.charAt(0).toUpperCase() + ticket.new_status.slice(1)}</span>
-              </div>
-              
-              <div class="detail-row">
-                <span><strong>Updated:</strong></span>
-                <span>${new Date().toLocaleString()}</span>
-              </div>
+            <div class="status-change">
+              <h3>${ticket.new_status.charAt(0).toUpperCase() + ticket.new_status.slice(1)}</h3>
+              <p><strong>Previous Status:</strong> ${ticket.old_status.charAt(0).toUpperCase() + ticket.old_status.slice(1)}</p>
+              <p><strong>New Status:</strong> ${ticket.new_status.charAt(0).toUpperCase() + ticket.new_status.slice(1)}</p>
             </div>
 
-            ${resolutionNotes && (ticket.new_status === 'resolved' || ticket.new_status === 'closed') ? `
-              <div class="resolution-box">
-                <h4>📝 Resolution Notes</h4>
-                <p>${resolutionNotes}</p>
-              </div>
-            ` : ''}
-
             ${ticket.new_status === 'resolved' ? `
-              <h3>🎉 Ticket Resolved</h3>
               <p>Great news! Your issue has been resolved. Our team has addressed your concern and the ticket is now marked as resolved.</p>
-              <p>If you're satisfied with the resolution, no further action is needed. If you have any additional questions or the issue persists, please reply to this email.</p>
             ` : ticket.new_status === 'closed' ? `
-              <h3>🔒 Ticket Closed</h3>
-              <p>Your support ticket has been closed. This usually means your issue has been fully resolved or no further action is required.</p>
-              <p>If you need to reopen this ticket or have new questions, please contact our support team.</p>
+              <p>Your ticket has been closed. This means the matter has been fully resolved and no further action is required.</p>
             ` : `
-              <h3>📞 Next Steps</h3>
               <p>Our support team continues to work on your ticket. You'll receive updates as we make progress on your request.</p>
             `}
             
-            <p><strong>Need more help?</strong> Contact us at support@autofleet.com or reply to this email.</p>
+            <p><strong>Questions?</strong> Contact our support team at support@autofleet.com</p>
           </div>
           <div class="footer">
             <p>AutoFleet Hub Support Team</p>
@@ -1721,10 +1663,8 @@ class EmailService {
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: #dc3545; color: white; padding: 20px; text-align: center; }
           .content { padding: 20px; background: #f9f9f9; }
-          .dispute-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; border-left: 5px solid #dc3545; }
+          .dispute-details { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
           .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-          .description-box { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
-          .process-box { background: #e9ecef; padding: 15px; border-radius: 5px; margin: 15px 0; }
           .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
         </style>
       </head>
@@ -1737,14 +1677,14 @@ class EmailService {
             <h2>Hello ${customer.first_name}!</h2>
             <p>We've received your dispute and our team will review it carefully. We're committed to resolving this matter fairly and promptly.</p>
             
-            <div class="dispute-box">
+            <div class="dispute-details">
               <h3>📋 Dispute Details</h3>
               <div class="detail-row">
                 <span><strong>Dispute ID:</strong></span>
                 <span><strong>${dispute.dispute_id}</strong></span>
               </div>
               <div class="detail-row">
-                <span><strong>Booking Reference:</strong></span>
+                <span><strong>Booking:</strong></span>
                 <span>${dispute.booking_reference}</span>
               </div>
               <div class="detail-row">
@@ -1760,39 +1700,26 @@ class EmailService {
                 <span>${dispute.priority.charAt(0).toUpperCase() + dispute.priority.slice(1)}</span>
               </div>
               <div class="detail-row">
-                <span><strong>Submitted:</strong></span>
-                <span>${new Date(dispute.created_at).toLocaleString()}</span>
-              </div>
-              
-              <div class="description-box">
-                <strong>Description:</strong><br>
-                ${dispute.description}
+                <span><strong>Status:</strong></span>
+                <span>${dispute.status.charAt(0).toUpperCase() + dispute.status.slice(1)}</span>
               </div>
             </div>
 
-            <div class="process-box">
-              <h3>🔍 Dispute Resolution Process</h3>
-              <ol>
-                <li><strong>Review:</strong> Our team will review your dispute within 24-48 hours</li>
-                <li><strong>Investigation:</strong> We'll gather information from all parties involved</li>
-                <li><strong>Communication:</strong> We may contact you for additional details</li>
-                <li><strong>Resolution:</strong> We'll work toward a fair resolution for all parties</li>
-                <li><strong>Notification:</strong> You'll be notified of the outcome</li>
-              </ol>
+            <div style="background: white; padding: 20px; border-radius: 5px;">
+              <h3>📝 Your Message:</h3>
+              <p style="background: #f8f9fa; padding: 15px; border-radius: 5px;">${dispute.description}</p>
             </div>
 
-            <h3>📞 What to Expect</h3>
+            <h3>⏱️ What happens next?</h3>
             <ul>
-              <li>Expected resolution time: 3-5 business days</li>
-              <li>You'll receive email updates on progress</li>
-              <li>Our mediation team will handle the review</li>
-              <li>All communications will be documented</li>
+              <li>Our team will review your dispute within 24-48 hours</li>
+              <li>We may contact you for additional information</li>
+              <li>You'll receive updates via email</li>
+              <li>All parties will be notified of the resolution</li>
             </ul>
-            
-            <p><strong>Dispute Reference:</strong> Please keep your dispute ID <strong>${dispute.dispute_id}</strong> for future reference.</p>
           </div>
           <div class="footer">
-            <p>If you have additional information, contact us at disputes@autofleet.com</p>
+            <p>Reference your dispute with ID: DSP-${dispute.id}</p>
             <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
           </div>
         </div>
@@ -1846,16 +1773,24 @@ class EmailService {
                 <span><strong>${dispute.dispute_id}</strong></span>
               </div>
               <div class="detail-row">
-                <span><strong>Booking Reference:</strong></span>
+                <span><strong>Booking:</strong></span>
                 <span>${dispute.booking_reference}</span>
               </div>
               <div class="detail-row">
                 <span><strong>Vehicle:</strong></span>
-                <span>${vehicle.make} ${vehicle.model} ${vehicle.year}</span>
+                <span>${vehicle.make} ${vehicle.model} ${vehicle.year} (${vehicle.license_plate})</span>
+              </div>
+              <div class="detail-row">
+                <span><strong>Booking Amount:</strong></span>
+                <span>$${booking.total_amount}</span>
               </div>
               <div class="detail-row">
                 <span><strong>Reason:</strong></span>
                 <span>${dispute.reason}</span>
+              </div>
+              <div class="detail-row">
+                <span><strong>Priority:</strong></span>
+                <span>${dispute.priority.charAt(0).toUpperCase() + dispute.priority.slice(1)}</span>
               </div>
               <div class="detail-row">
                 <span><strong>Submitted:</strong></span>
@@ -1863,7 +1798,7 @@ class EmailService {
               </div>
               
               <div class="description-box">
-                <strong>Customer's Concern:</strong><br>
+                <strong>Customer's Dispute Description:</strong><br>
                 ${dispute.description}
               </div>
             </div>
@@ -1874,8 +1809,9 @@ class EmailService {
                 <li>Our mediation team will review this dispute</li>
                 <li>You may be contacted for your perspective</li>
                 <li>Please gather any relevant documentation</li>
-                <li>Maintain professional communication</li>
-                <li>We'll work toward a fair resolution</li>
+                <li>Mediate between customer and owner</li>
+                <li>Make fair resolution decision</li>
+                <li>Update dispute status and notify parties</li>
               </ul>
             </div>
 
@@ -2049,10 +1985,7 @@ class EmailService {
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background: ${getStatusColor(dispute.new_status)}; color: white; padding: 20px; text-align: center; }
           .content { padding: 20px; background: #f9f9f9; }
-          .status-box { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; border-left: 5px solid ${getStatusColor(dispute.new_status)}; }
-          .status-change { display: flex; justify-content: center; align-items: center; margin: 15px 0; font-size: 18px; }
-          .detail-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
-          .resolution-box { background: #d4edda; padding: 15px; border-radius: 5px; margin: 15px 0; }
+          .status-change { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; text-align: center; }
           .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
         </style>
       </head>
@@ -2065,48 +1998,20 @@ class EmailService {
             <h2>Hello ${user.first_name}!</h2>
             <p>The status of your dispute has been updated by our mediation team.</p>
             
-            <div class="status-box">
-              <h3>📋 Dispute Information</h3>
-              <div class="detail-row">
-                <span><strong>Dispute ID:</strong></span>
-                <span>${dispute.dispute_id}</span>
-              </div>
-              <div class="detail-row">
-                <span><strong>Booking:</strong></span>
-                <span>${dispute.booking_reference}</span>
-              </div>
-              <div class="detail-row">
-                <span><strong>Vehicle:</strong></span>
-                <span>${vehicle.make} ${vehicle.model} ${vehicle.year}</span>
-              </div>
-              
-              <div class="status-change">
-                <span>${dispute.old_status.charAt(0).toUpperCase() + dispute.old_status.slice(1)}</span>
-                <span style="margin: 0 15px;">→</span>
-                <span style="color: ${getStatusColor(dispute.new_status)}; font-weight: bold;">${getStatusIcon(dispute.new_status)} ${dispute.new_status.charAt(0).toUpperCase() + dispute.new_status.slice(1)}</span>
-              </div>
-              
-              <div class="detail-row">
-                <span><strong>Updated:</strong></span>
-                <span>${new Date().toLocaleString()}</span>
-              </div>
+            <div class="status-change">
+              <h3>${dispute.new_status.charAt(0).toUpperCase() + dispute.new_status.slice(1)}</h3>
+              <p><strong>Previous Status:</strong> ${dispute.old_status.charAt(0).toUpperCase() + dispute.old_status.slice(1)}</p>
+              <p><strong>New Status:</strong> ${dispute.new_status.charAt(0).toUpperCase() + dispute.new_status.slice(1)}</p>
             </div>
 
-            ${resolutionNotes && (dispute.new_status === 'resolved' || dispute.new_status === 'closed') ? `
-              <div class="resolution-box">
-                <h4>📝 Resolution Details</h4>
-                <p>${resolutionNotes}</p>
-              </div>
-            ` : ''}
-
             ${dispute.new_status === 'resolved' ? `
-              <h3>✅ Dispute Resolved</h3>
+              <h3>🎉 Dispute Resolved</h3>
               <p>Great news! Your dispute has been resolved by our mediation team. We've reviewed all the information provided and reached a fair resolution.</p>
               <p>If you have any questions about this resolution, please contact our support team within 7 days.</p>
             ` : dispute.new_status === 'closed' ? `
               <h3>🔒 Dispute Closed</h3>
               <p>Your dispute has been closed. This means the matter has been fully resolved and no further action is required.</p>
-              <p>If you believe this dispute was closed in error or have new information, please contact our support team.</p>
+              <p>If you believe this dispute was closed in error or have new questions, please contact our support team.</p>
             ` : dispute.new_status === 'in_progress' ? `
               <h3>⏳ Dispute Under Review</h3>
               <p>Our mediation team is actively reviewing your dispute. We're gathering information from all parties to ensure a fair resolution.</p>
@@ -2127,6 +2032,53 @@ class EmailService {
     return await this.sendEmail(user.email, subject, html);
   }
 
+  // Admin booking notification email
+  async sendNewBookingAdminNotification(adminEmail, booking, customer, vehicle) {
+    const subject = `New Booking Created - AutoFleet Hub`;
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #2c3e7d; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .booking-details { background: white; padding: 20px; border-radius: 5px; margin: 15px 0; }
+          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>New Booking Created</h1>
+          </div>
+          <div class="content">
+            <h2>Booking #BK-${booking.id}</h2>
+            <div class="booking-details">
+              <h3>Booking Details</h3>
+              <ul>
+                <li><strong>Customer:</strong> ${customer.first_name} ${customer.last_name} (${customer.email})</li>
+                <li><strong>Vehicle:</strong> ${vehicle.make} ${vehicle.model} (${vehicle.license_plate})</li>
+                <li><strong>Start Date:</strong> ${new Date(booking.start_date).toLocaleDateString()}</li>
+                <li><strong>End Date:</strong> ${new Date(booking.end_date).toLocaleDateString()}</li>
+                <li><strong>Duration:</strong> ${booking.duration_days || 'N/A'} days</li>
+                <li><strong>Total Amount:</strong> $${booking.total_amount}</li>
+                <li><strong>Payment Status:</strong> ${booking.payment_status}</li>
+                <li><strong>Pickup Location:</strong> ${booking.pickup_location}</li>
+              </ul>
+            </div>
+            <p>Please review and manage this booking in the admin dashboard.</p>
+          </div>
+          <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    return await this.sendEmail(adminEmail, subject, html);
+  }
 }
 
 module.exports = EmailService;
