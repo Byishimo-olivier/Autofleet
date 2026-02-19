@@ -37,40 +37,52 @@ router.get('/dashboard/data', authenticateToken, requireOwnerOrAdmin, async (req
          ${statsCondition}`,
       statsParams
     );
-    // Monthly revenue: sum of total_amount for bookings in current month where user is the customer and payment_status is 'paid'
-    let totalRevenueQ;
-    if (requestingUserRole === 'customer') {
-      totalRevenueQ = await pool.query(
-        `SELECT SUM(total_amount) as revenue
-         FROM bookings
-         WHERE payment_status = 'paid'
-           AND customer_id = $1
-           AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)`,
+    // myRevenue: owner gets their vehicles' bookings only; admin gets all (same as platform)
+    let myRevenueQ;
+    if (requestingUserRole === 'owner') {
+      myRevenueQ = await pool.query(
+        `SELECT COALESCE(SUM(b.total_amount), 0) as revenue
+         FROM bookings b
+         LEFT JOIN vehicles v ON b.vehicle_id = v.id
+         WHERE v.owner_id = $1`,
         [requestingUserId]
       );
     } else {
-      totalRevenueQ = await pool.query(
-        `SELECT SUM(total_amount) as revenue
-         FROM bookings b
-         LEFT JOIN vehicles v ON b.vehicle_id = v.id
-         WHERE b.payment_status = 'paid'
-           AND DATE_TRUNC('month', b.created_at) = DATE_TRUNC('month', CURRENT_DATE)
-           ${statsCondition}`,
-        statsParams
+      // For admin: myRevenue = platform total (no restriction)
+      myRevenueQ = await pool.query(
+        `SELECT COALESCE(SUM(total_amount), 0) as revenue FROM bookings`
       );
     }
+
+    // platformRevenue: ALL bookings total (always, regardless of role)
+    const platformRevenueQ = await pool.query(
+      `SELECT COALESCE(SUM(total_amount), 0) as revenue FROM bookings`
+    );
+
     const avgRatingQ = await pool.query(`SELECT AVG(f.rating) as avg_rating FROM feedback f LEFT JOIN vehicles v ON f.vehicle_id = v.id WHERE f.created_at >= NOW() - INTERVAL '${periodInt} days' ${statsCondition}`, statsParams);
 
-    // Booking trends (last 7 days)
+    // Booking trends: most recent 30 days that have any bookings (all-time, so chart is never empty)
     const bookingTrendsQ = await pool.query(`
-      SELECT TO_CHAR(b.created_at, 'Dy') as date, COUNT(*) as bookings
+      SELECT TO_CHAR(DATE(b.created_at), 'Mon DD') as date,
+             COUNT(*) as bookings
       FROM bookings b
       LEFT JOIN vehicles v ON b.vehicle_id = v.id
-      WHERE b.created_at >= NOW() - INTERVAL '7 days' ${statsCondition}
-      GROUP BY date
-      ORDER BY MIN(b.created_at)
+      WHERE 1=1 ${statsCondition}
+      GROUP BY DATE(b.created_at), TO_CHAR(DATE(b.created_at), 'Mon DD')
+      ORDER BY DATE(b.created_at) DESC
+      LIMIT 30
     `, statsParams);
-    const bookingTrends = bookingTrendsQ.rows.map(row => ({ date: row.date, bookings: parseInt(row.bookings) }));
+    // Reverse so oldest is on the left of the chart
+    const bookingTrends = bookingTrendsQ.rows
+      .reverse()
+      .map(row => ({ date: row.date, bookings: parseInt(row.bookings) }));
+
+    // Total bookings (all time)
+    const totalBookingsQ = await pool.query(
+      `SELECT COUNT(*) as total FROM bookings b LEFT JOIN vehicles v ON b.vehicle_id = v.id WHERE 1=1 ${statsCondition}`,
+      statsParams
+    );
+    const totalBookings = totalBookingsQ.rows[0]?.total ? parseInt(totalBookingsQ.rows[0].total) : 0;
 
     // Fleet status
     const fleetStatusQ = await pool.query(`
@@ -100,11 +112,10 @@ router.get('/dashboard/data', authenticateToken, requireOwnerOrAdmin, async (req
     // Define stat values before using them in the response
     const totalVehicles = totalVehiclesQ.rows[0]?.total ? parseInt(totalVehiclesQ.rows[0].total) : 0;
     const activeBookings = activeBookingsQ.rows[0]?.active ? parseInt(activeBookingsQ.rows[0].active) : 0;
-    let revenueValue = 0;
-    if (totalRevenueQ.rows[0] && totalRevenueQ.rows[0].revenue !== null && totalRevenueQ.rows[0].revenue !== undefined && !isNaN(totalRevenueQ.rows[0].revenue)) {
-      revenueValue = parseFloat(totalRevenueQ.rows[0].revenue);
-    }
-    if (!isFinite(revenueValue) || revenueValue === null || revenueValue === undefined) revenueValue = 0;
+
+    const myRevenue = parseFloat(myRevenueQ.rows[0]?.revenue ?? 0) || 0;
+    const platformRevenue = parseFloat(platformRevenueQ.rows[0]?.revenue ?? 0) || 0;
+
     let avgRating = 0;
     if (avgRatingQ.rows[0] && avgRatingQ.rows[0].avg_rating !== null && avgRatingQ.rows[0].avg_rating !== undefined && !isNaN(avgRatingQ.rows[0].avg_rating)) {
       avgRating = parseFloat(avgRatingQ.rows[0].avg_rating).toFixed(1);
@@ -127,23 +138,20 @@ router.get('/dashboard/data', authenticateToken, requireOwnerOrAdmin, async (req
     // Compose recentBookings array with expected keys
     const safeRecentBookings = Array.isArray(recentBookings)
       ? recentBookings.map(row => ({
-          customer: typeof row.name === 'string' && row.name.trim() ? row.name : 'N/A',
-          vehicle: typeof row.car === 'string' && row.car.trim() ? row.car.split(' - ')[0] : 'N/A',
-          duration: typeof row.car === 'string' && row.car.includes(' - ') ? row.car.split(' - ')[1] : 'N/A',
-          status: typeof row.status === 'string' && row.status.trim() ? row.status : 'N/A',
-        }))
+        customer: typeof row.name === 'string' && row.name.trim() ? row.name : 'N/A',
+        vehicle: typeof row.car === 'string' && row.car.trim() ? row.car.split(' - ')[0] : 'N/A',
+        duration: typeof row.car === 'string' && row.car.includes(' - ') ? row.car.split(' - ')[1] : 'N/A',
+        status: typeof row.status === 'string' && row.status.trim() ? row.status : 'N/A',
+      }))
       : [];
 
     // Compose response with exact keys expected by frontend
-    // Always return a number for monthlyRevenue (no $ prefix, just a number, never undefined)
-    let monthlyRevenue = 0;
-    if (typeof revenueValue === 'number' && isFinite(revenueValue) && revenueValue !== null && revenueValue !== undefined) {
-      monthlyRevenue = revenueValue;
-    }
     successResponse(res, {
       totalVehicles,
       activeBookings,
-      monthlyRevenue,
+      totalBookings,
+      myRevenue,
+      platformRevenue,
       avgRating: Number.isFinite(Number(avgRating)) ? Number(avgRating) : 0,
       fleetStatus: fleetStatusObj,
       bookingTrends: Array.isArray(bookingTrends) ? bookingTrends : [],
@@ -162,18 +170,18 @@ router.get('/dashboard/summary', authenticateToken, requireOwnerOrAdmin, async (
   const { period = '30', limit = 6 } = req.query;
   const periodInt = parseInt(period, 10) || 30;
   const limitInt = parseInt(limit, 10) || 6;
-  
+
   const isOwner = requestingUserRole === 'owner';
   const ownerParam = isOwner ? [requestingUserId] : [];
-  
+
   const statsParams = ownerParam;
   const statsCondition = isOwner ? 'AND v.owner_id = $1' : '';
-  
+
   const rbParams = isOwner ? [requestingUserId, limitInt] : [limitInt];
   const rbCondition = isOwner ? 'AND v.owner_id = $1' : '';
-  
+
   let totalBookingsVal = 1;
-  
+
   try {
     // Stats - use MAKE_INTERVAL instead of string interpolation
     const totalRevenueQ = await pool.query(
@@ -245,7 +253,7 @@ router.get('/dashboard/summary', authenticateToken, requireOwnerOrAdmin, async (
       ? [totalBookingsVal, periodInt, requestingUserId, limitInt]
       : [totalBookingsVal, periodInt, limitInt];
     const vCondition = isOwner ? 'AND v.owner_id = $3' : '';
-    
+
     const vehiclesQ = await pool.query(
       `SELECT v.make, v.model, v.year, v.type, v.status, v.daily_rate,
               SUM(CASE WHEN b.payment_status = 'paid' THEN b.total_amount ELSE 0 END) as revenue,
@@ -319,54 +327,54 @@ router.get('/dashboard', authenticateToken, requireOwnerOrAdmin, async (req, res
   const { period = '30' } = req.query;
   const periodInt = parseInt(period, 10);
   const { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId);
-  
+
   try {
     const totalVehicles = await pool.query(
-      `SELECT COUNT(*) as total FROM vehicles v WHERE 1=1 ${vehicleCondition}`, 
+      `SELECT COUNT(*) as total FROM vehicles v WHERE 1=1 ${vehicleCondition}`,
       params
     );
-    
+
     const availableVehicles = await pool.query(
-      `SELECT COUNT(*) as available FROM vehicles v WHERE status = 'available' ${vehicleCondition}`, 
+      `SELECT COUNT(*) as available FROM vehicles v WHERE status = 'available' ${vehicleCondition}`,
       params
     );
-    
+
     const totalBookings = await pool.query(
       `SELECT COUNT(*) as total 
        FROM bookings b 
        LEFT JOIN vehicles v ON b.vehicle_id = v.id 
        WHERE b.created_at >= NOW() - MAKE_INTERVAL(days => $${params.length + 1}) 
-       ${vehicleCondition}`, 
+       ${vehicleCondition}`,
       [...params, periodInt]
     );
-    
+
     const totalRevenue = await pool.query(
       `SELECT SUM(total_amount) as revenue 
        FROM bookings b 
        LEFT JOIN vehicles v ON b.vehicle_id = v.id 
        WHERE b.payment_status = 'paid' 
        AND b.created_at >= NOW() - MAKE_INTERVAL(days => $${params.length + 1}) 
-       ${vehicleCondition}`, 
+       ${vehicleCondition}`,
       [...params, periodInt]
     );
-    
+
     const activeBookings = await pool.query(
       `SELECT COUNT(*) as active 
        FROM bookings b 
        LEFT JOIN vehicles v ON b.vehicle_id = v.id 
-       WHERE b.status = 'active' ${vehicleCondition}`, 
+       WHERE b.status = 'active' ${vehicleCondition}`,
       params
     );
-    
+
     const averageRating = await pool.query(
       `SELECT AVG(f.rating) as avg_rating 
        FROM feedback f 
        LEFT JOIN vehicles v ON f.vehicle_id = v.id 
        WHERE f.created_at >= NOW() - MAKE_INTERVAL(days => $${params.length + 1}) 
-       ${vehicleCondition}`, 
+       ${vehicleCondition}`,
       [...params, periodInt]
     );
-    
+
     const analytics = {
       totalVehicles: parseInt(totalVehicles.rows[0].total),
       availableVehicles: parseInt(availableVehicles.rows[0].available),
@@ -375,7 +383,7 @@ router.get('/dashboard', authenticateToken, requireOwnerOrAdmin, async (req, res
       activeBookings: parseInt(activeBookings.rows[0].active),
       averageRating: averageRating.rows[0].avg_rating ? parseFloat(Number(averageRating.rows[0].avg_rating).toFixed(2)) : 0
     };
-    
+
     successResponse(res, analytics, 'Dashboard analytics retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -388,32 +396,32 @@ router.get('/bookings/trends', authenticateToken, requireOwnerOrAdmin, async (re
   const requestingUserId = req.user.id;
   const requestingUserRole = req.user.role;
   const { period = '30' } = req.query;
-  const periodInt = parseInt(period, 10);
+  const periodInt = parseInt(period, 10) || 30;
   const { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId, 2);
-  
+
   try {
     const sql = `
       SELECT 
-        DATE(b.created_at) as date,
+        TO_CHAR(DATE(b.created_at), 'Mon DD') as date,
         COUNT(*) as bookings,
         SUM(b.total_amount) as revenue,
         AVG(b.total_amount) as avg_booking_value
       FROM bookings b
       LEFT JOIN vehicles v ON b.vehicle_id = v.id
       WHERE b.created_at >= NOW() - MAKE_INTERVAL(days => $1) ${vehicleCondition}
-      GROUP BY DATE(b.created_at)
+      GROUP BY DATE(b.created_at), TO_CHAR(DATE(b.created_at), 'Mon DD')
       ORDER BY DATE(b.created_at)
     `;
-    
+
     const result = await pool.query(sql, [periodInt, ...params]);
-    
+
     const formattedTrends = result.rows.map(trend => ({
       date: trend.date,
       bookings: parseInt(trend.bookings),
       revenue: parseFloat(trend.revenue || 0),
       avgBookingValue: parseFloat(trend.avg_booking_value || 0)
     }));
-    
+
     successResponse(res, formattedTrends, 'Booking trends retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -428,7 +436,7 @@ router.get('/vehicles/utilization', authenticateToken, requireOwnerOrAdmin, asyn
   const { period = '30' } = req.query;
   const periodInt = parseInt(period, 10);
   const { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId, 3);
-  
+
   try {
     const sql = `
       SELECT 
@@ -451,9 +459,9 @@ router.get('/vehicles/utilization', authenticateToken, requireOwnerOrAdmin, asyn
       GROUP BY v.id
       ORDER BY total_revenue DESC
     `;
-    
+
     const result = await pool.query(sql, [periodInt, periodInt, ...params]);
-    
+
     const formattedUtilization = result.rows.map(vehicle => ({
       vehicleId: vehicle.id,
       make: vehicle.make,
@@ -467,10 +475,10 @@ router.get('/vehicles/utilization', authenticateToken, requireOwnerOrAdmin, asyn
       totalRevenue: parseFloat(vehicle.total_revenue || 0),
       averageRating: vehicle.avg_rating ? parseFloat(vehicle.avg_rating.toFixed(2)) : 0,
       totalReviews: parseInt(vehicle.total_reviews),
-      utilizationRate: vehicle.total_bookings > 0 ? 
+      utilizationRate: vehicle.total_bookings > 0 ?
         parseFloat(((vehicle.completed_bookings / vehicle.total_bookings) * 100).toFixed(2)) : 0
     }));
-    
+
     successResponse(res, formattedUtilization, 'Vehicle utilization retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -485,7 +493,7 @@ router.get('/revenue', authenticateToken, requireOwnerOrAdmin, async (req, res) 
   const { period = '30', groupBy = 'day' } = req.query;
   const periodInt = parseInt(period, 10);
   const { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId, 2);
-  
+
   let dateFormat = '';
   switch (groupBy) {
     case 'week':
@@ -497,7 +505,7 @@ router.get('/revenue', authenticateToken, requireOwnerOrAdmin, async (req, res) 
     default:
       dateFormat = `TO_CHAR(b.created_at, 'YYYY-MM-DD')`;
   }
-  
+
   try {
     const sql = `
       SELECT 
@@ -512,9 +520,9 @@ router.get('/revenue', authenticateToken, requireOwnerOrAdmin, async (req, res) 
       GROUP BY period
       ORDER BY period
     `;
-    
+
     const result = await pool.query(sql, [periodInt, ...params]);
-    
+
     const formattedRevenue = result.rows.map(item => ({
       period: item.period,
       totalBookings: parseInt(item.total_bookings),
@@ -522,7 +530,7 @@ router.get('/revenue', authenticateToken, requireOwnerOrAdmin, async (req, res) 
       pendingRevenue: parseFloat(item.pending_revenue || 0),
       avgBookingValue: parseFloat(item.avg_booking_value || 0)
     }));
-    
+
     successResponse(res, formattedRevenue, 'Revenue analytics retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -534,16 +542,16 @@ router.get('/revenue', authenticateToken, requireOwnerOrAdmin, async (req, res) 
 router.get('/customers', authenticateToken, requireAdmin, async (req, res) => {
   const { period = '30' } = req.query;
   const periodInt = parseInt(period, 10);
-  
+
   try {
     const newCustomers = await pool.query(
       `SELECT COUNT(*) as new_customers 
        FROM users 
        WHERE role = 'customer' 
-       AND created_at >= NOW() - MAKE_INTERVAL(days => $1)`, 
+       AND created_at >= NOW() - MAKE_INTERVAL(days => $1)`,
       [periodInt]
     );
-    
+
     const topCustomers = await pool.query(`
       SELECT u.id, u.first_name, u.last_name, u.email,
         COUNT(b.id) as total_bookings,
@@ -557,7 +565,7 @@ router.get('/customers', authenticateToken, requireAdmin, async (req, res) => {
       ORDER BY total_spent DESC
       LIMIT 10
     `, [periodInt]);
-    
+
     const repeatCustomers = await pool.query(`
       SELECT COUNT(DISTINCT customer_id) as repeat_customers
       FROM bookings
@@ -569,7 +577,7 @@ router.get('/customers', authenticateToken, requireAdmin, async (req, res) => {
         HAVING COUNT(*) > 1
       )
     `, [periodInt]);
-    
+
     const analytics = {
       newCustomers: parseInt(newCustomers.rows[0].new_customers),
       topCustomers: topCustomers.rows.map(customer => ({
@@ -581,7 +589,7 @@ router.get('/customers', authenticateToken, requireAdmin, async (req, res) => {
       })),
       repeatCustomers: parseInt(repeatCustomers.rows[0].repeat_customers)
     };
-    
+
     successResponse(res, analytics, 'Customer analytics retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -596,10 +604,10 @@ router.get('/vehicles/popular', authenticateToken, requireOwnerOrAdmin, async (r
   const { period = '30', limit = 10 } = req.query;
   const periodInt = parseInt(period, 10);
   const limitInt = parseInt(limit, 10);
-  
+
   let { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId, 2);
   params = [periodInt, ...params, limitInt];
-  
+
   try {
     const sql = `
       SELECT 
@@ -623,9 +631,9 @@ router.get('/vehicles/popular', authenticateToken, requireOwnerOrAdmin, async (r
       ORDER BY booking_count DESC, revenue DESC
       LIMIT $${params.length}
     `;
-    
+
     const result = await pool.query(sql, params);
-    
+
     const formattedVehicles = result.rows.map(vehicle => ({
       vehicleId: vehicle.id,
       make: vehicle.make,
@@ -638,7 +646,7 @@ router.get('/vehicles/popular', authenticateToken, requireOwnerOrAdmin, async (r
       averageRating: vehicle.avg_rating ? parseFloat(vehicle.avg_rating.toFixed(2)) : 0,
       reviewCount: parseInt(vehicle.review_count)
     }));
-    
+
     successResponse(res, formattedVehicles, 'Popular vehicles retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -653,7 +661,7 @@ router.get('/bookings/status', authenticateToken, requireOwnerOrAdmin, async (re
   const { period = '30' } = req.query;
   const periodInt = parseInt(period, 10);
   const { vehicleCondition, params } = getVehicleConditionAndParams(requestingUserRole, requestingUserId, 2);
-  
+
   try {
     const sql = `
       SELECT 
@@ -666,15 +674,15 @@ router.get('/bookings/status', authenticateToken, requireOwnerOrAdmin, async (re
       GROUP BY b.status
       ORDER BY count DESC
     `;
-    
+
     const result = await pool.query(sql, [periodInt, ...params]);
-    
+
     const formattedData = result.rows.map(item => ({
       status: item.status,
       count: parseInt(item.count),
       totalAmount: parseFloat(item.total_amount || 0)
     }));
-    
+
     successResponse(res, formattedData, 'Booking status distribution retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);

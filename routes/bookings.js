@@ -4,6 +4,9 @@ const pool = require('../config/database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const EmailService = require('../Service/EmailService');
+const Flutterwave = require('flutterwave-node-v3');
+
+const flw = new Flutterwave(process.env.FLW_PUBLIC_KEY, process.env.FLW_SECRET_KEY);
 
 // Create an instance of EmailService
 const emailService = new EmailService();
@@ -44,7 +47,7 @@ router.get('/active', authenticateToken, async (req, res) => {
     const { rows: bookings } = await pool.query(sql, params);
 
     bookings.forEach(booking => {
-      if (booking.images) {
+      if (booking.images && typeof booking.images === 'string') {
         try {
           booking.images = JSON.parse(booking.images);
         } catch (e) {
@@ -156,7 +159,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
     if (dateRange) {
       const now = new Date();
       let startDate;
-      
+
       switch (dateRange) {
         case 'today':
           startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -170,7 +173,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
         case 'quarter':
           startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
           break;
-        desfault:
+          desNfault:
           startDate = null;
       }
 
@@ -185,9 +188,9 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
     const allowedSortFields = ['created_at', 'start_date', 'end_date', 'total_amount', 'status'];
     const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
     const validSortOrder = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
-    
+
     sql += ` ORDER BY b.${validSortBy} ${validSortOrder}`;
-    
+
     // Pagination
     sql += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     params.push(parseInt(limit), parseInt(offset));
@@ -204,7 +207,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
       }
 
       // Parse vehicle images
-      if (booking.vehicle_images) {
+      if (booking.vehicle_images && typeof booking.vehicle_images === 'string') {
         try {
           booking.vehicle_images = JSON.parse(booking.vehicle_images);
         } catch (e) {
@@ -213,7 +216,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
       }
 
       // Format dates for display
-      booking.date_range = booking.start_date && booking.end_date 
+      booking.date_range = booking.start_date && booking.end_date
         ? `${new Date(booking.start_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} → ${new Date(booking.end_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
         : 'N/A';
 
@@ -260,7 +263,7 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
     if (dateRange) {
       const now = new Date();
       let startDate;
-      
+
       switch (dateRange) {
         case 'today':
           startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -388,10 +391,10 @@ router.put('/admin/bulk-status', authenticateToken, requireAdmin, async (req, re
 
     console.log('✅ Bulk update result:', result.rowCount, 'bookings updated');
 
-    successResponse(res, { 
+    successResponse(res, {
       updatedCount: result.rowCount,
       bookingIds,
-      newStatus: status 
+      newStatus: status
     }, `${result.rowCount} bookings updated successfully`);
 
   } catch (err) {
@@ -446,7 +449,7 @@ router.get('/admin/export', authenticateToken, requireAdmin, async (req, res) =>
     if (dateRange) {
       const now = new Date();
       let startDate;
-      
+
       switch (dateRange) {
         case 'month':
           startDate = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -478,7 +481,7 @@ router.get('/admin/export', authenticateToken, requireAdmin, async (req, res) =>
     if (format === 'csv') {
       // Convert to CSV format
       const csvHeaders = [
-        'Booking ID', 'Customer', 'Email', 'Vehicle', 'Plate', 'Owner', 
+        'Booking ID', 'Customer', 'Email', 'Vehicle', 'Plate', 'Owner',
         'Status', 'Start Date', 'End Date', 'Amount', 'Payment Status', 'Payment Method', 'Created At'
       ].join(',');
 
@@ -559,7 +562,7 @@ router.get('/admin/:id', authenticateToken, requireAdmin, async (req, res) => {
     }
 
     // Parse vehicle images
-    if (booking.images) {
+    if (booking.images && typeof booking.images === 'string') {
       try {
         booking.images = JSON.parse(booking.images);
       } catch (e) {
@@ -586,11 +589,11 @@ router.get('/admin/:id', authenticateToken, requireAdmin, async (req, res) => {
 
 // Get all bookings with filtering (existing route)
 router.get('/', authenticateToken, async (req, res) => {
-  const { 
-    page = 1, 
-    limit = 10, 
-    status, 
-    customerId, 
+  const {
+    page = 1,
+    limit = 10,
+    status,
+    customerId,
     vehicleId,
     startDate,
     endDate
@@ -668,7 +671,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
     // Parse images if available and calculate duration_days
     bookings.forEach(booking => {
-      if (booking.images) {
+      if (booking.images && typeof booking.images === 'string') {
         try {
           booking.images = JSON.parse(booking.images);
         } catch (e) {
@@ -760,7 +763,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   const bookingId = req.params.id;
   const requestingUserId = req.user.id;
   const requestingUserRole = req.user.role;
-  
+
   try {
     const { rows } = await pool.query(`
       SELECT b.*, 
@@ -776,31 +779,31 @@ router.get('/:id', authenticateToken, async (req, res) => {
       LEFT JOIN users o ON v.owner_id = o.id
       WHERE b.id = $1
     `, [bookingId]);
-    
+
     const booking = rows[0];
-    
+
     if (!booking) {
       return errorResponse(res, 'Booking not found', 404);
     }
-    
+
     // Check access permissions
-    const hasAccess = requestingUserRole === 'admin' || 
-                     booking.customer_id === requestingUserId ||
-                     booking.owner_id === requestingUserId;
-    
+    const hasAccess = requestingUserRole === 'admin' ||
+      booking.customer_id === requestingUserId ||
+      booking.owner_id === requestingUserId;
+
     if (!hasAccess) {
       return errorResponse(res, 'Access denied', 403);
     }
-    
+
     // Parse images if available
-    if (booking.images) {
-      try { 
-        booking.images = JSON.parse(booking.images); 
-      } catch (e) { 
-        booking.images = []; 
+    if (booking.images && typeof booking.images === 'string') {
+      try {
+        booking.images = JSON.parse(booking.images);
+      } catch (e) {
+        booking.images = [];
       }
     }
-    
+
     successResponse(res, booking, 'Booking retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -886,15 +889,15 @@ router.put('/:id/status', authenticateToken, async (req, res) => {
       LEFT JOIN users o ON v.owner_id = o.id
       WHERE b.id = $1
     `, [bookingId]);
-    
+
     const booking = rows[0];
-    
+
     if (!booking) {
       return errorResponse(res, 'Booking not found', 404);
     }
 
     const oldStatus = booking.status;
-    
+
     // Check permissions
     let canUpdate = false;
     if (requestingUserRole === 'admin') {
@@ -904,22 +907,26 @@ router.put('/:id/status', authenticateToken, async (req, res) => {
     } else if (requestingUserRole === 'customer' && booking.customer_id === requestingUserId) {
       canUpdate = status === 'cancelled' && ['pending', 'confirmed'].includes(booking.status);
     }
-    
+
     if (!canUpdate) {
       return errorResponse(res, 'Access denied or invalid status transition', 403);
     }
-    
+
     // Update booking status
     await pool.query(`
       UPDATE bookings 
       SET status = $1, updated_at = CURRENT_TIMESTAMP 
       WHERE id = $2
     `, [status, bookingId]);
-    
+
     // Update vehicle status if needed
     if (status === 'active') {
       await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', ['rented', booking.vehicle_id]);
-    } else if (status === 'completed' || status === 'cancelled') {
+    } else if (status === 'completed') {
+      // If it's a sale and it's completed, it's Soldout (inactive)
+      const newStatus = booking.listing_type === 'sale' ? 'inactive' : 'available';
+      await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', [newStatus, booking.vehicle_id]);
+    } else if (status === 'cancelled') {
       await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', ['available', booking.vehicle_id]);
     }
 
@@ -977,7 +984,7 @@ router.put('/:id/status', authenticateToken, async (req, res) => {
       console.error('❌ Failed to send booking status update email notifications:', emailError);
       // Don't fail the status update if email fails
     }
-    
+
     successResponse(res, null, 'Booking status updated successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -1010,17 +1017,17 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
       LEFT JOIN users o ON v.owner_id = o.id
       WHERE b.id = $1 AND b.customer_id = $2
     `, [bookingId, requestingUserId]);
-    
+
     const booking = rows[0];
-    
+
     if (!booking) {
       return errorResponse(res, 'Booking not found or access denied', 404);
     }
-    
+
     if (booking.payment_status === 'paid') {
       return errorResponse(res, 'Payment already processed', 400);
     }
-    
+
     // Update payment information
     await pool.query(`
       UPDATE bookings 
@@ -1074,7 +1081,7 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
       console.error('❌ Failed to send payment confirmation email:', emailError);
       // Don't fail the payment processing if email fails
     }
-    
+
     successResponse(res, null, 'Payment processed successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -1156,9 +1163,9 @@ router.post('/', authenticateToken, async (req, res) => {
 
   const customer_id = req.user.id;
 
-  // Validation
-  if (!vehicle_id || !pickup_location || !pickup_date || !return_date || !payment_method) {
-    return errorResponse(res, 'Missing required fields: vehicle_id, pickup_location, pickup_date, return_date, payment_method', 400);
+  // Validation (dates optional for now, will validate after fetching vehicle)
+  if (!vehicle_id || !pickup_location || !payment_method) {
+    return errorResponse(res, 'Missing required fields: vehicle_id, pickup_location, payment_method', 400);
   }
 
   // Validate payment method
@@ -1175,20 +1182,6 @@ router.post('/', authenticateToken, async (req, res) => {
     return errorResponse(res, 'Card details (card_number, expiry_date, security_code) are required for card payment', 400);
   }
 
-  // Validate dates
-  const startDate = new Date(pickup_date);
-  const endDate = new Date(return_date);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0); // Reset time to start of day
-
-  if (startDate < today) {
-    return errorResponse(res, 'Pickup date cannot be in the past', 400);
-  }
-
-  if (endDate <= startDate) {
-    return errorResponse(res, 'Return date must be after pickup date', 400);
-  }
-
   try {
     // Check if vehicle exists and is available
     const vehicleResult = await pool.query(
@@ -1201,33 +1194,57 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     const vehicle = vehicleResult.rows[0];
+    const isSale = vehicle.listing_type === 'sale';
 
     if (vehicle.status !== 'available') {
       return errorResponse(res, 'Vehicle is not available for booking', 400);
     }
 
-    // Check for conflicting bookings
-    const conflictResult = await pool.query(`
-      SELECT id FROM bookings 
-      WHERE vehicle_id = $1 
-        AND status IN ('confirmed', 'active', 'pending')
-        AND (
-          (start_date <= $2 AND end_date >= $2) OR
-          (start_date <= $3 AND end_date >= $3) OR
-          (start_date >= $2 AND end_date <= $3)
-        )
-    `, [vehicle_id, pickup_date, return_date]);
+    // Default dates for sales if missing
+    let finalPickupDate = pickup_date || new Date().toISOString().split('T')[0];
+    let finalReturnDate = return_date || finalPickupDate;
 
-    if (conflictResult.rows.length > 0) {
-      return errorResponse(res, 'Vehicle is already booked for the selected dates', 409);
+    let startDate = new Date(finalPickupDate);
+    let endDate = new Date(finalReturnDate);
+
+    if (!isSale) {
+      if (!pickup_date || !return_date) {
+        return errorResponse(res, 'Dates are required for rentals', 400);
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      if (startDate < today) {
+        return errorResponse(res, 'Pickup date cannot be in the past', 400);
+      }
+      if (endDate <= startDate) {
+        return errorResponse(res, 'Return date must be after pickup date', 400);
+      }
+    }
+
+    // Check for conflicting bookings (only for rentals)
+    if (!isSale) {
+      const conflictResult = await pool.query(`
+        SELECT id FROM bookings 
+        WHERE vehicle_id = $1 
+          AND status IN ('confirmed', 'active', 'pending')
+          AND (
+            (start_date <= $2 AND end_date >= $2) OR
+            (start_date <= $3 AND end_date >= $3) OR
+            (start_date >= $2 AND end_date <= $3)
+          )
+      `, [vehicle_id, finalPickupDate, finalReturnDate]);
+
+      if (conflictResult.rows.length > 0) {
+        return errorResponse(res, 'Vehicle is already booked for the selected dates', 409);
+      }
     }
 
     // Calculate duration and validate total_price
-    const durationMs = endDate.getTime() - startDate.getTime();
-    const durationDays = Math.ceil(durationMs / (1000 * 60 * 60 * 24));
-
     let expectedPrice = 0;
-    if (vehicle.listing_type === 'sale') {
+    const durationDays = isSale ? 0 : Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    if (isSale) {
       expectedPrice = vehicle.selling_price || 0;
     } else {
       expectedPrice = durationDays * (vehicle.daily_rate || 0);
@@ -1245,7 +1262,7 @@ router.post('/', authenticateToken, async (req, res) => {
     const paymentDetails = {
       method: payment_method,
       ...(payment_method === 'mobile' && { telephone }),
-      ...(payment_method === 'card' && { 
+      ...(payment_method === 'card' && {
         card_number: card_number?.slice(-4), // Store only last 4 digits for security
         expiry_date,
         // Don't store security_code for security reasons
@@ -1272,8 +1289,8 @@ router.post('/', authenticateToken, async (req, res) => {
     `, [
       customer_id,
       vehicle_id,
-      pickup_date,
-      return_date,
+      finalPickupDate,
+      finalReturnDate,
       total_price,
       'pending', // Initial status
       'pending', // Payment status
@@ -1398,7 +1415,7 @@ router.post('/', authenticateToken, async (req, res) => {
 router.post('/test-booking-email', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { emailType = 'booking_confirmation', email } = req.body;
-    
+
     if (!email) {
       return errorResponse(res, 'Email address is required', 400);
     }
@@ -1463,8 +1480,8 @@ router.post('/test-booking-email', authenticateToken, requireAdmin, async (req, 
         break;
       default:
         result = await emailService.sendEmail(
-          email, 
-          'Test Booking Email - AutoFleet Hub', 
+          email,
+          'Test Booking Email - AutoFleet Hub',
           `
           <h1>🚗 Booking Email System Test</h1>
           <p>This is a test email from the AutoFleet Hub booking system.</p>
@@ -1482,7 +1499,7 @@ router.post('/test-booking-email', authenticateToken, requireAdmin, async (req, 
 
     if (result.success) {
       console.log('✅ Test booking email sent successfully');
-      successResponse(res, { 
+      successResponse(res, {
         messageId: result.messageId,
         emailType: emailType,
         recipient: email,
@@ -1543,6 +1560,122 @@ router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async 
   } catch (err) {
     console.error('❌ Error notifying admins about new booking:', err);
     errorResponse(res, 'Failed to notify admins', 500);
+  }
+});
+
+
+// Verify Flutterwave Payment
+router.post('/verify-payment', authenticateToken, async (req, res) => {
+  const { transaction_id, booking_id } = req.body;
+
+  if (!transaction_id || !booking_id) {
+    return errorResponse(res, 'Missing transaction_id or booking_id', 400);
+  }
+
+  try {
+    // 1. Verify transaction with Flutterwave
+    const response = await flw.Transaction.verify({ id: transaction_id });
+
+    if (response.status !== 'success' || response.data.status !== 'successful') {
+      return errorResponse(res, 'Payment verification failed', 400);
+    }
+
+    const transactionData = response.data;
+    const amountPaid = transactionData.amount;
+    const currency = transactionData.currency;
+
+    // 2. Fetch booking to verify amount (important for security)
+    const { rows: bookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
+    const booking = bookingRows[0];
+
+    if (!booking) {
+      return errorResponse(res, 'Booking not found', 404);
+    }
+
+    // Optional: Check if amount matches
+    if (Math.abs(booking.total_amount - amountPaid) > 1) { // Allow $1 difference for rounding/fees if any
+      console.warn(`Amount mismatch: Expected ${booking.total_amount}, Paid ${amountPaid}`);
+    }
+
+    // 3. Update booking status and transaction ID
+    const updateResult = await pool.query(`
+      UPDATE bookings 
+      SET status = 'confirmed', 
+          payment_status = 'completed',
+          payment_transaction_id = $2,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `, [booking_id, transaction_id]);
+
+    const updatedBooking = updateResult.rows[0];
+
+    // 4. Update vehicle status based on listing type
+    const { rows: vehicleRows } = await pool.query('SELECT listing_type FROM vehicles WHERE id = $1', [booking.vehicle_id]);
+    const vehicle = vehicleRows[0];
+
+    if (vehicle) {
+      let newVehicleStatus = 'rented';
+      if (vehicle.listing_type === 'sale') {
+        newVehicleStatus = 'sold';
+      }
+
+      await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', [newVehicleStatus, booking.vehicle_id]);
+      console.log(`Vehicle ${booking.vehicle_id} status updated to ${newVehicleStatus}`);
+    }
+
+    // 5. Send confirmation emails
+    try {
+      // Re-fetch full details for email
+      const { rows: fullBookingRows } = await pool.query(`
+        SELECT b.*, 
+               v.make, v.model, v.year, v.license_plate, v.images, v.daily_rate, v.selling_price, v.listing_type,
+               u.first_name as customer_name, u.email as customer_email,
+               o.first_name as owner_name, o.email as owner_email
+        FROM bookings b
+        JOIN vehicles v ON b.vehicle_id = v.id
+        JOIN users u ON b.customer_id = u.id
+        JOIN users o ON v.owner_id = o.id
+        WHERE b.id = $1
+      `, [booking_id]);
+
+      const fullBooking = fullBookingRows[0];
+      if (fullBooking) {
+        const customer = {
+          first_name: fullBooking.customer_name,
+          email: fullBooking.customer_email
+        };
+        const owner = {
+          first_name: fullBooking.owner_name,
+          email: fullBooking.owner_email
+        };
+        const emailVehicle = {
+          make: fullBooking.make,
+          model: fullBooking.model,
+          year: fullBooking.year,
+          license_plate: fullBooking.license_plate
+        };
+
+        // Send confirmation email to customer
+        await emailService.sendBookingConfirmation(fullBooking, customer, emailVehicle, owner);
+
+        // Send payment confirmation email to customer
+        await emailService.sendPaymentConfirmation(fullBooking, customer, {
+          method: fullBooking.payment_method,
+          transaction_id: transaction_id
+        });
+
+        // Send new booking notification to owner
+        await emailService.sendNewBookingNotification(fullBooking, customer, emailVehicle, owner);
+      }
+    } catch (emailErr) {
+      console.error('Failed to send confirmation emails:', emailErr);
+    }
+
+    successResponse(res, updatedBooking, 'Payment verified and booking confirmed');
+  } catch (err) {
+    console.error('Error verifying payment:', err);
+    errorResponse(res, 'An error occurred during payment verification', 500);
   }
 });
 

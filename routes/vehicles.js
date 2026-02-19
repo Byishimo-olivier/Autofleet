@@ -9,6 +9,7 @@ const { successResponse, errorResponse, validateImageFile } = require('../utils/
 const EmailService = require('../Service/EmailService');
 const emailService = new EmailService();
 
+
 // Configure multer for file uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -30,7 +31,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-const upload = multer({ 
+const upload = multer({
   storage,
   fileFilter,
   limits: {
@@ -65,9 +66,9 @@ const vehicleUpload = multer({
 const parseVehicleImages = (images, vehicleId) => {
   console.log(`Parsing images for vehicle ${vehicleId}:`, images);
   console.log('Images type:', typeof images);
-  
+
   let parsedImages = [];
-  
+
   try {
     if (Array.isArray(images)) {
       // Already an array - handle both storage formats
@@ -82,13 +83,13 @@ const parseVehicleImages = (images, vehicleId) => {
       parsedImages = [];
       console.log('No images found or empty');
     }
-    
+
     // Handle different storage formats:
     // Format 1: ["/uploads/vehicles/56/vehicle-123.jpg"] (with vehicle ID folder)
     // Format 2: ["/uploads/vehicles/vehicle-123.jpg"] (without vehicle ID folder)
     console.log('Final parsed images array:', parsedImages);
     console.log('Images array length:', parsedImages.length);
-    
+
     return parsedImages;
   } catch (e) {
     console.log('Failed to parse images:', e.message);
@@ -116,62 +117,65 @@ router.get('/', async (req, res) => {
     } = req.query;
 
     const offset = (page - 1) * limit;
-    let sql = `SELECT v.*, u.first_name as owner_first_name, u.last_name as owner_last_name, u.phone as owner_phone, 
-      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
-      FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1`;
     let params = [];
     let idx = 1;
 
-    // Basic filters
-    if (status) { sql += ` AND v.status = $${idx++}`; params.push(status); }
-    if (type) { sql += ` AND v.type = $${idx++}`; params.push(type); }
-    if (listing_type) { sql += ` AND v.listing_type = $${idx++}`; params.push(listing_type); }
-    
-    // Location filter (pickup location)
-    if (location) { 
-      sql += ` AND v.location_address ILIKE $${idx++}`; 
-      params.push(`%${location}%`); 
-    }
-
-    // Date availability filter - check if vehicle is available during requested period
+    // Date availability detection - instead of filtering out, we detect and mark as is_booked
+    let isBookedSql = '';
     if (pickupDate && returnDate) {
-      sql += ` AND v.id NOT IN (
-        SELECT DISTINCT b.vehicle_id 
+      isBookedSql = `, (
+        SELECT COUNT(*) > 0
         FROM bookings b 
-        WHERE b.status IN ('confirmed', 'active') 
+        WHERE b.vehicle_id = v.id 
+        AND b.status IN ('confirmed', 'active', 'pending') 
         AND (
           (b.start_date <= $${idx} AND b.end_date >= $${idx}) OR
           (b.start_date <= $${idx + 1} AND b.end_date >= $${idx + 1}) OR
           (b.start_date >= $${idx} AND b.end_date <= $${idx + 1})
         )
-      )`;
-      params.push(pickupDate, pickupDate, returnDate, returnDate, pickupDate, returnDate);
+      ) as is_booked_on_dates`;
+      params.push(pickupDate, returnDate);
       idx += 2;
+    } else {
+      // Default to checking if booked today if no dates provided
+      isBookedSql = `, (
+        SELECT COUNT(*) > 0
+        FROM bookings b 
+        WHERE b.vehicle_id = v.id 
+        AND b.status IN ('confirmed', 'active', 'pending') 
+        AND b.start_date <= CURRENT_DATE 
+        AND b.end_date >= CURRENT_DATE
+      ) as is_booked_on_dates`;
     }
-    
+
+    let sql = `SELECT v.*, u.first_name as owner_first_name, u.last_name as owner_last_name, u.phone as owner_phone, 
+      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
+      ${isBookedSql}
+      FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1`;
+
     // Price filtering - handle both rent and sale
-    if (minPrice) { 
+    if (minPrice) {
       sql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate >= $${idx}) OR 
         (v.listing_type = 'sale' AND v.selling_price >= $${idx}) OR
         (v.listing_type IS NULL AND v.daily_rate >= $${idx})
-      )`; 
-      params.push(parseFloat(minPrice)); 
+      )`;
+      params.push(parseFloat(minPrice));
       idx++;
     }
-    if (maxPrice) { 
+    if (maxPrice) {
       sql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate <= $${idx}) OR 
         (v.listing_type = 'sale' AND v.selling_price <= $${idx}) OR
         (v.listing_type IS NULL AND v.daily_rate <= $${idx})
-      )`; 
-      params.push(parseFloat(maxPrice)); 
+      )`;
+      params.push(parseFloat(maxPrice));
       idx++;
     }
 
     // Search filter
     if (search) {
-      sql += ` AND (v.make ILIKE $${idx} OR v.model ILIKE $${idx+1} OR v.description ILIKE $${idx+2})`;
+      sql += ` AND (v.make ILIKE $${idx} OR v.model ILIKE $${idx + 1} OR v.description ILIKE $${idx + 2})`;
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm);
       idx += 3;
@@ -183,35 +187,35 @@ router.get('/', async (req, res) => {
     const validSortOrder = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
     sql += ` ORDER BY v.${validSortBy} ${validSortOrder} LIMIT $${idx++} OFFSET $${idx}`;
     params.push(parseInt(limit), parseInt(offset));
-    
+
     const vehiclesResult = await pool.query(sql, params);
-    
+
     console.log('=== GET ALL VEHICLES DEBUG ===');
     console.log('Raw vehicles from DB:', vehiclesResult.rows.length, 'vehicles found');
     console.log('Applied filters:', { type, location, pickupDate, returnDate, minPrice, maxPrice, search, listing_type });
-    
+
     let vehicles = vehiclesResult.rows.map(vehicle => {
       console.log(`\nVehicle ID ${vehicle.id}:`);
       console.log('Raw images field from DB:', vehicle.images);
-      
+
       let features = [];
       try {
         features = vehicle.features && typeof vehicle.features === 'string' && vehicle.features.trim() !== '' ? JSON.parse(vehicle.features) : [];
-      } catch (e) { 
+      } catch (e) {
         console.log('Failed to parse features:', e.message);
-        features = []; 
+        features = [];
       }
-      
+
       // Use helper function to parse images
       const images = parseVehicleImages(vehicle.images, vehicle.id);
       const firstImage = images && images.length > 0 ? images[0] : null;
       console.log('First image selected:', firstImage);
-      
+
       // Determine price based on listing type
       let displayPrice = null;
       let priceLabel = '';
       let priceType = vehicle.listing_type || 'rent';
-      
+
       if (priceType === 'sale') {
         displayPrice = vehicle.selling_price;
         priceLabel = 'For Sale';
@@ -219,7 +223,7 @@ router.get('/', async (req, res) => {
         displayPrice = vehicle.daily_rate;
         priceLabel = 'Per Day';
       }
-      
+
       return {
         ...vehicle,
         features,
@@ -231,17 +235,19 @@ router.get('/', async (req, res) => {
         listing_type: priceType,
         price_label: priceLabel,
         plate: vehicle.license_plate,
-        status: vehicle.status ? vehicle.status.charAt(0).toUpperCase() + vehicle.status.slice(1) : '',
+        status: (vehicle.listing_type === 'sale' && (vehicle.status === 'rented' || vehicle.status === 'inactive' || vehicle.is_booked_on_dates))
+          ? 'Sold'
+          : (vehicle.is_booked_on_dates ? 'Rented' : (vehicle.status ? vehicle.status.charAt(0).toUpperCase() + vehicle.status.slice(1) : '')),
         type: vehicle.type ? vehicle.type.charAt(0).toUpperCase() + vehicle.type.slice(1) : '',
         image: firstImage
       };
     });
-    
+
     console.log('=== FINAL VEHICLES RESPONSE ===');
     vehicles.forEach((v, index) => {
       console.log(`Vehicle ${index + 1}: ID=${v.id}, listing_type=${v.listing_type}, price=${v.price}, price_label=${v.price_label}, image=${v.image}, images_count=${v.images?.length || 0}`);
     });
-    
+
     // Updated count query to match all filters
     let countSql = 'SELECT COUNT(*) as total FROM vehicles v WHERE 1=1';
     let countParams = [];
@@ -277,9 +283,9 @@ router.get('/', async (req, res) => {
       total = vehiclesResult.rows.length;
       console.log('Corrected total using vehicles array length:', total);
     }
-    
+
     const totalPages = Math.ceil(total / limit);
-    
+
     successResponse(res, {
       vehicles,
       pagination: {
@@ -326,58 +332,62 @@ router.get('/featured', async (req, res) => {
     } = req.query;
 
     const offset = (page - 1) * limit;
-    
-    // Build dynamic SQL query with filters
-    let sql = `SELECT v.*, 
-      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
-      FROM vehicles v WHERE v.status = 'available'`;
+
     let params = [];
     let idx = 1;
 
-    // Add filters
-    if (type) { 
-      sql += ` AND v.type = $${idx++}`; 
-      params.push(type); 
-    }
-    if (location) { 
-      sql += ` AND v.location_address ILIKE $${idx++}`; 
-      params.push(`%${location}%`); 
-    }
-
-    // Date availability filter
+    // Date availability detection
+    let isBookedSql = '';
     if (pickupDate && returnDate) {
-      sql += ` AND v.id NOT IN (
-        SELECT DISTINCT b.vehicle_id 
+      isBookedSql = `, (
+        SELECT COUNT(*) > 0
         FROM bookings b 
-        WHERE b.status IN ('confirmed', 'active') 
+        WHERE b.vehicle_id = v.id 
+        AND b.status IN ('confirmed', 'active', 'pending') 
         AND (
           (b.start_date <= $${idx} AND b.end_date >= $${idx}) OR
           (b.start_date <= $${idx + 1} AND b.end_date >= $${idx + 1}) OR
           (b.start_date >= $${idx} AND b.end_date <= $${idx + 1})
         )
-      )`;
-      params.push(pickupDate, pickupDate, returnDate, returnDate, pickupDate, returnDate);
+      ) as is_booked_on_dates`;
+      params.push(pickupDate, returnDate);
       idx += 2;
+    } else {
+      // Default to checking if booked today
+      isBookedSql = `, (
+        SELECT COUNT(*) > 0
+        FROM bookings b 
+        WHERE b.vehicle_id = v.id 
+        AND b.status IN ('confirmed', 'active', 'pending') 
+        AND b.start_date <= CURRENT_DATE 
+        AND b.end_date >= CURRENT_DATE
+      ) as is_booked_on_dates`;
     }
 
-    if (minPrice) { 
+    // Build dynamic SQL query with filters
+    let sql = `SELECT v.*, 
+      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
+      ${isBookedSql}
+      FROM vehicles v WHERE (v.status = 'available' OR v.status = 'rented')`;
+
+    if (minPrice) {
       sql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate >= $${idx}) OR 
         (v.listing_type = 'sale' AND v.selling_price >= $${idx})
-      )`; 
-      params.push(parseFloat(minPrice)); 
+      )`;
+      params.push(parseFloat(minPrice));
       idx++;
     }
-    if (maxPrice) { 
+    if (maxPrice) {
       sql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate <= $${idx}) OR 
         (v.listing_type = 'sale' AND v.selling_price <= $${idx})
-      )`; 
-      params.push(parseFloat(maxPrice)); 
+      )`;
+      params.push(parseFloat(maxPrice));
       idx++;
     }
     if (search) {
-      sql += ` AND (v.make ILIKE $${idx} OR v.model ILIKE $${idx+1} OR v.description ILIKE $${idx+2})`;
+      sql += ` AND (v.make ILIKE $${idx} OR v.model ILIKE $${idx + 1} OR v.description ILIKE $${idx + 2})`;
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm);
       idx += 3;
@@ -387,7 +397,7 @@ router.get('/featured', async (req, res) => {
     const allowedSortFields = ['created_at', 'daily_rate', 'selling_price', 'make', 'model', 'year'];
     const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
     const validSortOrder = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
-    
+
     sql += ` ORDER BY v.${validSortBy} ${validSortOrder}, bookings_count DESC LIMIT $${idx++} OFFSET $${idx}`;
     params.push(parseInt(limit), parseInt(offset));
 
@@ -404,7 +414,7 @@ router.get('/featured', async (req, res) => {
 
     if (type) { countSql += ` AND v.type = $${countIdx++}`; countParams.push(type); }
     if (location) { countSql += ` AND v.location_address ILIKE $${countIdx++}`; countParams.push(`%${location}%`); }
-    
+
     if (pickupDate && returnDate) {
       countSql += ` AND v.id NOT IN (
         SELECT DISTINCT b.vehicle_id 
@@ -419,25 +429,25 @@ router.get('/featured', async (req, res) => {
       countParams.push(pickupDate, pickupDate, returnDate, returnDate, pickupDate, returnDate);
       countIdx += 2;
     }
-    
-    if (minPrice) { 
+
+    if (minPrice) {
       countSql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate >= $${countIdx}) OR 
         (v.listing_type = 'sale' AND v.selling_price >= $${countIdx})
-      )`; 
-      countParams.push(parseFloat(minPrice)); 
+      )`;
+      countParams.push(parseFloat(minPrice));
       countIdx++;
     }
-    if (maxPrice) { 
+    if (maxPrice) {
       countSql += ` AND (
         (v.listing_type = 'rent' AND v.daily_rate <= $${countIdx}) OR 
         (v.listing_type = 'sale' AND v.selling_price <= $${countIdx})
-      )`; 
-      countParams.push(parseFloat(maxPrice)); 
+      )`;
+      countParams.push(parseFloat(maxPrice));
       countIdx++;
     }
     if (search) {
-      countSql += ` AND (v.make ILIKE $${countIdx} OR v.model ILIKE $${countIdx+1} OR v.description ILIKE $${countIdx+2})`;
+      countSql += ` AND (v.make ILIKE $${countIdx} OR v.model ILIKE $${countIdx + 1} OR v.description ILIKE $${countIdx + 2})`;
       const searchTerm = `%${search}%`;
       countParams.push(searchTerm, searchTerm, searchTerm);
       countIdx += 3;
@@ -450,17 +460,17 @@ router.get('/featured', async (req, res) => {
     const vehicles = result.rows.map(vehicle => {
       console.log(`\nFeatured Vehicle ID ${vehicle.id}:`);
       console.log('Raw images field from DB:', vehicle.images);
-      
+
       // Use helper function to parse images
       const images = parseVehicleImages(vehicle.images, vehicle.id);
       const firstImage = images && images.length > 0 ? images[0] : null;
       console.log('First image selected for featured:', firstImage);
-      
+
       // Determine price based on listing type
       let displayPrice = null;
       let priceLabel = '';
       let priceType = vehicle.listing_type || 'rent';
-      
+
       if (priceType === 'sale') {
         displayPrice = vehicle.selling_price;
         priceLabel = 'For Sale';
@@ -468,7 +478,7 @@ router.get('/featured', async (req, res) => {
         displayPrice = vehicle.daily_rate;
         priceLabel = 'Per Day';
       }
-      
+
       return {
         id: vehicle.id,
         name: vehicle.make + ' ' + vehicle.model,
@@ -478,7 +488,9 @@ router.get('/featured', async (req, res) => {
         listing_type: priceType,
         price_label: priceLabel,
         type: (vehicle.type ? vehicle.type.charAt(0).toUpperCase() + vehicle.type.slice(1) : '') + ' • ' + (vehicle.transmission ? vehicle.transmission.charAt(0).toUpperCase() + vehicle.transmission.slice(1) : ''),
-        status: vehicle.status ? vehicle.status.charAt(0).toUpperCase() + vehicle.status.slice(1) : '',
+        status: (vehicle.listing_type === 'sale' && (vehicle.status === 'rented' || vehicle.status === 'inactive' || vehicle.is_booked_on_dates))
+          ? 'Sold'
+          : (vehicle.is_booked_on_dates ? 'Rented' : (vehicle.status ? vehicle.status.charAt(0).toUpperCase() + vehicle.status.slice(1) : '')),
         img: firstImage,
         rating: 4.8,
         reviews: 127
@@ -522,7 +534,13 @@ router.get('/:id', async (req, res) => {
   const vehicleId = req.params.id;
   try {
     const result = await pool.query(`
-      SELECT v.*, u.first_name as owner_first_name, u.last_name as owner_last_name, u.phone as owner_phone, u.email as owner_email
+      SELECT v.*, u.first_name as owner_first_name, u.last_name as owner_last_name, u.phone as owner_phone, u.email as owner_email,
+             (SELECT COUNT(*) > 0 
+              FROM bookings b 
+              WHERE b.vehicle_id = v.id 
+                AND b.status IN ('confirmed', 'active', 'pending')
+                AND b.start_date <= CURRENT_DATE 
+                AND b.end_date >= CURRENT_DATE) as is_booked_today
       FROM vehicles v
       LEFT JOIN users u ON v.owner_id = u.id
       WHERE v.id = $1
@@ -531,10 +549,10 @@ router.get('/:id', async (req, res) => {
     if (!vehicle) {
       return errorResponse(res, 'Vehicle not found', 404);
     }
-    
+
     console.log(`=== GET VEHICLE BY ID DEBUG (ID: ${vehicleId}) ===`);
     console.log('Raw images field from DB:', vehicle.images);
-    
+
     try {
       vehicle.features = vehicle.features ? JSON.parse(vehicle.features) : [];
       // Use helper function to parse images
@@ -552,6 +570,10 @@ router.get('/:id', async (req, res) => {
       }
       vehicle.price = displayPrice;
       vehicle.price_label = priceLabel;
+      // Map status for frontend
+      vehicle.status = (vehicle.listing_type === 'sale' && (vehicle.status === 'rented' || vehicle.status === 'inactive' || vehicle.is_booked_today))
+        ? 'Sold'
+        : (vehicle.is_booked_today ? 'Rented' : (vehicle.status ? vehicle.status.charAt(0).toUpperCase() + vehicle.status.slice(1) : ''));
     } catch (e) {
       console.log('Failed to parse vehicle data:', e.message);
       vehicle.features = [];
@@ -721,7 +743,7 @@ router.post(
       try {
         // Send vehicle submission notification to admin
         const adminEmails = process.env.ADMIN_EMAILS ? process.env.ADMIN_EMAILS.split(',') : ['admin@autofleet.com'];
-        
+
         const subject = `New Vehicle Submission: ${make} ${model} - AutoFleet Hub`;
         const html = `
           <!DOCTYPE html>
@@ -866,8 +888,8 @@ router.put('/admin/:id/status', authenticateToken, requireAdmin, async (req, res
       console.error('❌ Failed to send vehicle status email:', emailError);
     }
 
-    const statusMessage = status === 'available' ? 'approved' : 
-                         status === 'inactive' ? 'marked as pending' : 'marked as maintenance';
+    const statusMessage = status === 'available' ? 'approved' :
+      status === 'inactive' ? 'marked as pending' : 'marked as maintenance';
 
     successResponse(res, null, `Vehicle ${statusMessage} successfully`);
   } catch (err) {
@@ -1131,7 +1153,7 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
   const vehicleId = req.params.id;
   const userId = req.user.id;
   const userRole = req.user.role;
-  
+
   try {
     const vehicleResult = await pool.query(`
       SELECT v.*, u.first_name, u.last_name, u.email 
@@ -1140,26 +1162,26 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
       WHERE v.id = $1
     `, [vehicleId]);
     const vehicle = vehicleResult.rows[0];
-    
+
     if (!vehicle) {
       return errorResponse(res, 'Vehicle not found', 404);
     }
-    
+
     if (userRole !== 'admin' && vehicle.owner_id !== userId) {
       return errorResponse(res, 'Access denied', 403);
     }
-    
+
     const activeBookingsResult = await pool.query(
       `SELECT COUNT(*) as activeBookings FROM bookings WHERE vehicle_id = $1 AND status IN ('pending', 'confirmed', 'active')`,
       [vehicleId]
     );
-    
+
     if (parseInt(activeBookingsResult.rows[0].activebookings) > 0) {
       return errorResponse(res, 'Cannot delete vehicle with active bookings', 400);
     }
-    
+
     const deleteResult = await pool.query('DELETE FROM vehicles WHERE id = $1', [vehicleId]);
-    
+
     if (deleteResult.rowCount === 0) {
       return errorResponse(res, 'Vehicle not found', 404);
     }
@@ -1219,7 +1241,7 @@ router.delete('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) =
         console.error('❌ Failed to send vehicle deletion notification:', emailError);
       }
     }
-    
+
     successResponse(res, null, 'Vehicle deleted successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -1280,7 +1302,7 @@ router.post('/:id/notify', authenticateToken, requireAdmin, async (req, res) => 
 router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { emailType = 'approved', email } = req.body;
-    
+
     if (!email) {
       return errorResponse(res, 'Email address is required', 400);
     }
@@ -1327,18 +1349,18 @@ router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => 
 // Get image URL with placeholder and server URL
 const getImageUrl = (imagePath) => {
   if (!imagePath) return "/placeholder.png";
-  
+
   // If it's already a full URL, return as-is
   if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
     return imagePath;
   }
-  
+
   // For local images, construct URL with your server base
   const serverUrl = 'http://localhost:5000'; // or import.meta.env.VITE_SERVER_URL
-  
+
   // Ensure single leading slash
   const normalizedPath = imagePath.startsWith('/') ? imagePath : `/${imagePath}`;
-  
+
   return `${serverUrl}${normalizedPath}`;
 };
 

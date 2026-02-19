@@ -85,7 +85,7 @@ router.post('/', authenticateToken, async (req, res) => {
     );
 
     console.log('Booking query result:', bookingResult.rows.length);
-    
+
     const booking = bookingResult.rows[0];
     if (!booking) {
       console.log('❌ Booking not found or access denied');
@@ -103,7 +103,7 @@ router.post('/', authenticateToken, async (req, res) => {
     // Check if feedback already exists
     console.log('🔍 Checking for existing feedback...');
     const existingFeedbackResult = await pool.query('SELECT id FROM feedback WHERE booking_id = $1', [bookingId]);
-    
+
     if (existingFeedbackResult.rows.length > 0) {
       console.log('❌ Feedback already exists for booking:', bookingId);
       return errorResponse(res, 'Feedback already submitted for this booking', 409);
@@ -117,12 +117,12 @@ router.post('/', authenticateToken, async (req, res) => {
       `INSERT INTO feedback (booking_id, customer_id, vehicle_id, rating, comment, service_rating, vehicle_condition_rating, created_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, CURRENT_TIMESTAMP) RETURNING *`,
       [
-        bookingId, 
-        customerId, 
-        booking.vehicle_id, 
-        numericRating, 
-        comment || null, 
-        numericServiceRating, 
+        bookingId,
+        customerId,
+        booking.vehicle_id,
+        numericRating,
+        comment || null,
+        numericServiceRating,
         numericVehicleConditionRating
       ]
     );
@@ -177,9 +177,9 @@ router.post('/', authenticateToken, async (req, res) => {
       // Don't fail the feedback submission if email fails
     }
 
-    successResponse(res, { 
+    successResponse(res, {
       feedbackId: newFeedback.id,
-      feedback: newFeedback 
+      feedback: newFeedback
     }, 'Feedback submitted successfully');
 
   } catch (error) {
@@ -519,7 +519,16 @@ router.get('/filtered', authenticateToken, async (req, res) => {
     params.push(parseInt(limit), parseInt(offset));
 
     const feedbackResult = await pool.query(sql, params);
-    const feedback = feedbackResult.rows;
+    const feedback = feedbackResult.rows.map(row => {
+      if (row.images && typeof row.images === 'string') {
+        try {
+          row.images = JSON.parse(row.images);
+        } catch (e) {
+          row.images = [];
+        }
+      }
+      return row;
+    });
 
     // Get total count with same filters
     let countSql = `
@@ -702,7 +711,7 @@ router.post('/bulk-action', authenticateToken, requireAdmin, async (req, res) =>
 router.get('/analytics', authenticateToken, async (req, res) => {
   try {
     const { timeframe = '30', vehicleId, ownerId } = req.query;
-    
+
     let baseCondition = '';
     let params = [];
     let paramIndex = 1;
@@ -983,7 +992,7 @@ router.get('/export', authenticateToken, requireAdmin, async (req, res) => {
 router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { emailType = 'thank_you', email, customMessage } = req.body;
-    
+
     if (!email) {
       return errorResponse(res, 'Email address is required', 400);
     }
@@ -1054,7 +1063,7 @@ router.post('/test-email', authenticateToken, requireAdmin, async (req, res) => 
 
     if (result.success) {
       console.log('✅ Test feedback email sent successfully');
-      successResponse(res, { 
+      successResponse(res, {
         messageId: result.messageId,
         emailType: emailType,
         recipient: email,
@@ -1118,7 +1127,16 @@ router.get('/', async (req, res) => {
   params.push(parseInt(limit), parseInt(offset));
   try {
     const feedbackResult = await pool.query(sql, params);
-    const feedback = feedbackResult.rows;
+    const feedback = feedbackResult.rows.map(row => {
+      if (row.images && typeof row.images === 'string') {
+        try {
+          row.images = JSON.parse(row.images);
+        } catch (e) {
+          row.images = [];
+        }
+      }
+      return row;
+    });
     // Get total count
     let countSql = 'SELECT COUNT(*) as total FROM feedback f WHERE 1=1';
     let countParams = [];
@@ -1262,7 +1280,7 @@ router.get('/customer/:customerId', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT f.*, 
-        v.make, v.model, v.year, v.license_plate,
+        v.make, v.model, v.year, v.license_plate, v.images,
         b.start_date, b.end_date
       FROM feedback f
       LEFT JOIN vehicles v ON f.vehicle_id = v.id
@@ -1271,7 +1289,19 @@ router.get('/customer/:customerId', authenticateToken, async (req, res) => {
       ORDER BY f.created_at DESC`,
       [customerId]
     );
-    successResponse(res, result.rows, 'Customer feedback retrieved successfully');
+
+    const feedbacks = result.rows.map(feedback => {
+      if (feedback.images && typeof feedback.images === 'string') {
+        try {
+          feedback.images = JSON.parse(feedback.images);
+        } catch (e) {
+          feedback.images = [];
+        }
+      }
+      return feedback;
+    });
+
+    successResponse(res, feedbacks, 'Customer feedback retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
     return errorResponse(res, 'Database error', 500);

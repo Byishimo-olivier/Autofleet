@@ -77,9 +77,9 @@ router.get('/admin/all', authenticateToken, requireAdmin, async (req, res) => {
     const allowedSortFields = ['created_at', 'first_name', 'last_name', 'email', 'role'];
     const validSortBy = allowedSortFields.includes(sortBy) ? sortBy : 'created_at';
     const validSortOrder = ['ASC', 'DESC'].includes(sortOrder.toUpperCase()) ? sortOrder.toUpperCase() : 'DESC';
-    
+
     sql += ` ORDER BY u.${validSortBy} ${validSortOrder}`;
-    
+
     // Pagination
     sql += ` LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`;
     params.push(parseInt(limit), parseInt(offset));
@@ -439,7 +439,7 @@ router.get('/admin/export', authenticateToken, requireAdmin, async (req, res) =>
     if (format === 'csv') {
       // Convert to CSV format
       const csvHeaders = [
-        'ID', 'Email', 'First Name', 'Last Name', 'Phone', 'Role', 
+        'ID', 'Email', 'First Name', 'Last Name', 'Phone', 'Role',
         'Total Bookings', 'Total Vehicles', 'Created At'
       ].join(',');
 
@@ -508,7 +508,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       params.push(role);
     }
     if (search) {
-      sql += ` AND (first_name ILIKE $${paramIdx} OR last_name ILIKE $${paramIdx+1} OR email ILIKE $${paramIdx+2})`;
+      sql += ` AND (first_name ILIKE $${paramIdx} OR last_name ILIKE $${paramIdx + 1} OR email ILIKE $${paramIdx + 2})`;
       const searchTerm = `%${search}%`;
       params.push(searchTerm, searchTerm, searchTerm);
       paramIdx += 3;
@@ -531,7 +531,7 @@ router.get('/', authenticateToken, requireAdmin, async (req, res) => {
       countParams.push(role);
     }
     if (search) {
-      countSql += ` AND (first_name ILIKE $${countIdx} OR last_name ILIKE $${countIdx+1} OR email ILIKE $${countIdx+2})`;
+      countSql += ` AND (first_name ILIKE $${countIdx} OR last_name ILIKE $${countIdx + 1} OR email ILIKE $${countIdx + 2})`;
       const searchTerm = `%${search}%`;
       countParams.push(searchTerm, searchTerm, searchTerm);
       countIdx += 3;
@@ -609,7 +609,7 @@ router.get('/settings', authenticateToken, async (req, res) => {
     // Get user preferences if they exist in a settings table
     let preferences = {
       language: 'en',
-      currency: 'USD',
+      currency: 'RWF',
       darkMode: false,
       notifications: {
         email: true,
@@ -779,7 +779,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     const requestingUserRole = req.user.role;
 
     // No more redirect needed since settings route is now above this one
-    
+
     // Validate that userId is a number
     const userIdInt = parseInt(userId);
     if (isNaN(userIdInt)) {
@@ -794,12 +794,12 @@ router.get('/:id', authenticateToken, async (req, res) => {
       `SELECT id, email, first_name, last_name, phone, role, created_at, updated_at FROM users WHERE id = $1`,
       [userIdInt]
     );
-    
+
     const user = result.rows[0];
     if (!user) {
       return errorResponse(res, 'User not found', 404);
     }
-    
+
     successResponse(res, user, 'User retrieved successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -827,11 +827,11 @@ router.put('/:id/role', authenticateToken, requireAdmin, async (req, res) => {
       `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`,
       [role, userIdInt]
     );
-    
+
     if (result.rowCount === 0) {
       return errorResponse(res, 'User not found', 404);
     }
-    
+
     successResponse(res, null, 'User role updated successfully');
   } catch (err) {
     console.error('Database error:', err);
@@ -855,21 +855,21 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
       `SELECT COUNT(*) as activeBookings FROM bookings WHERE customer_id = $1 AND status IN ('pending', 'confirmed', 'active')`,
       [userIdInt]
     );
-    
+
     if (parseInt(activeBookingsResult.rows[0].activebookings) > 0) {
       return errorResponse(res, 'Cannot delete user with active bookings', 400);
     }
-    
+
     // Delete user
     const deleteResult = await pool.query(
       `DELETE FROM users WHERE id = $1`,
       [userIdInt]
     );
-    
+
     if (deleteResult.rowCount === 0) {
       return errorResponse(res, 'User not found', 404);
     }
-    
+
     successResponse(res, null, 'User deleted successfully');
   } catch (err) {
     console.error('Database error:', err);
