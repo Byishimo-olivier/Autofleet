@@ -1,6 +1,7 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
   user: process.env.PGUSER || 'postgres',
   host: process.env.PGHOST || 'localhost',
   database: process.env.PGDATABASE || 'autofleet',
@@ -14,17 +15,24 @@ const pool = new Pool({
     console.log('Connected to PostgreSQL database');
     await initializeDatabase(client);
   } catch (err) {
-    console.error('Error connecting to PostgreSQL:', err.stack);
+    if (err.code === 'ENOTFOUND' && process.env.PGHOST && process.env.PGHOST.includes('dpg-')) {
+      console.error('\n❌ DATABASE CONNECTION ERROR:');
+      console.error('It looks like you are trying to use a Render INTERNAL hostname from your local machine.');
+      console.error('Hostname:', process.env.PGHOST);
+      console.error('FIX: Please go to your Render dashboard and use the "External Database URL" instead.\n');
+    } else {
+      console.error('Error connecting to PostgreSQL:', err.stack);
+    }
   } finally {
     client.release();
   }
 })();
-    console.log('Connected to PostgreSQL database');
+console.log('Connected to PostgreSQL database');
 async function initializeDatabase(client) {
   try {
     await client.query(`
       CREATE TYPE user_role AS ENUM ('customer', 'owner', 'admin');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
@@ -38,20 +46,20 @@ async function initializeDatabase(client) {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  // ...existing code...
+    // ...existing code...
     // Vehicles table
     await client.query(`
       CREATE TYPE vehicle_type AS ENUM ('sedan', 'suv', 'van', 'truck');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TYPE transmission_type AS ENUM ('manual', 'automatic');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TYPE fuel_type_enum AS ENUM ('gasoline', 'diesel', 'electric', 'hybrid');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TYPE vehicle_status AS ENUM ('available', 'rented', 'maintenance', 'inactive');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TABLE IF NOT EXISTS vehicles (
         id SERIAL PRIMARY KEY,
@@ -65,7 +73,7 @@ async function initializeDatabase(client) {
         seats INTEGER,
         transmission transmission_type DEFAULT 'automatic',
         fuel_type fuel_type_enum DEFAULT 'gasoline',
-        daily_rate NUMERIC(10,2) NOT NULL,
+        daily_rate NUMERIC(10,2),
         description TEXT,
         features JSONB,
         images JSONB,
@@ -73,18 +81,39 @@ async function initializeDatabase(client) {
         location_lat NUMERIC(10,8),
         location_lng NUMERIC(11,8),
         location_address TEXT,
+        listing_type VARCHAR(20) DEFAULT 'rent',
+        selling_price NUMERIC(10,2),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  // ...existing code...
+
+    // --- AUTOMATED MIGRATIONS ---
+    console.log('Running database migrations...');
+
+    // Add missing columns if they don't exist
+    await client.query(`
+      ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS listing_type VARCHAR(20) DEFAULT 'rent';
+    `).catch(err => console.log('Migration Note: listing_type column already exists or error:', err.message));
+
+    await client.query(`
+      ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS selling_price NUMERIC(10,2);
+    `).catch(err => console.log('Migration Note: selling_price column already exists or error:', err.message));
+
+    // Remove NOT NULL constraint from daily_rate to support "For Sale" listings
+    await client.query(`
+      ALTER TABLE vehicles ALTER COLUMN daily_rate DROP NOT NULL;
+    `).catch(err => console.log('Migration Note: daily_rate constraint update error:', err.message));
+
+    console.log('Migrations completed');
+    // ...existing code...
     // Bookings table
     await client.query(`
       CREATE TYPE booking_status AS ENUM ('pending', 'confirmed', 'active', 'completed', 'cancelled');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TYPE payment_status_enum AS ENUM ('pending', 'paid', 'refunded');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TABLE IF NOT EXISTS bookings (
         id SERIAL PRIMARY KEY,
@@ -104,7 +133,7 @@ async function initializeDatabase(client) {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  // ...existing code...
+    // ...existing code...
     // Feedback table
     await client.query(`
       CREATE TABLE IF NOT EXISTS feedback (
@@ -119,11 +148,11 @@ async function initializeDatabase(client) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  // ...existing code...
+    // ...existing code...
     // Notifications table
     await client.query(`
       CREATE TYPE notification_type AS ENUM ('booking', 'payment', 'reminder', 'system');
-    `).catch(() => {});
+    `).catch(() => { });
     await client.query(`
       CREATE TABLE IF NOT EXISTS notifications (
         id SERIAL PRIMARY KEY,
@@ -135,7 +164,7 @@ async function initializeDatabase(client) {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-  // ...existing code...
+    // ...existing code...
     // Vehicle tracking table
     await client.query(`
       CREATE TABLE IF NOT EXISTS vehicle_tracking (
