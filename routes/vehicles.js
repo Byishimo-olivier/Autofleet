@@ -832,7 +832,9 @@ router.post(
       if (error.code === '23505') {
         return errorResponse(res, 'Vehicle with this license plate already exists', 409);
       }
-      errorResponse(res, 'Internal server error', 500);
+
+      // Return more detailed error for debugging
+      errorResponse(res, `Internal server error: ${error.message} (${error.code || 'no code'})`, 500);
     }
   }
 );
