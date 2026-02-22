@@ -1557,10 +1557,10 @@ router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async 
 
 // Initiate Paypack Payment
 router.post('/initiate-payment', authenticateToken, async (req, res) => {
-  const { booking_id, amount, email } = req.body;
+  const { booking_id, amount, email, number } = req.body;
 
-  if (!booking_id || !amount || !email) {
-    return errorResponse(res, 'Missing booking_id, amount, or email', 400);
+  if (!booking_id || !amount || !number) {
+    return errorResponse(res, 'Missing booking_id, amount, or phone number', 400);
   }
 
   try {
@@ -1578,6 +1578,7 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
     console.log('📱 Initiating Paypack payment:', {
       booking_id,
       amount,
+      number,
       email,
       currency: 'RWF'
     });
@@ -1607,8 +1608,7 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
       `${PAYPACK_API_URL}/api/transactions/cashin`,
       {
         amount: parseFloat(amount),
-        number: email,
-        environment: 'production'
+        number: number
       },
       {
         headers: {

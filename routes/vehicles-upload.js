@@ -17,10 +17,23 @@ router.get('/test', (req, res) => {
 let vehicleUpload;
 const useCloudinary = process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET;
 
+console.log('🔍 Cloudinary config check:', {
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME ? '✅ set' : '❌ missing',
+  api_key: process.env.CLOUDINARY_API_KEY ? '✅ set' : '❌ missing',
+  api_secret: process.env.CLOUDINARY_API_SECRET ? '✅ set' : '❌ missing',
+  useCloudinary
+});
+
 if (useCloudinary) {
   // ✅ CLOUDINARY STORAGE
   const { CloudinaryStorage } = require('multer-storage-cloudinary');
   const cloudinary = require('cloudinary').v2;
+  
+  console.log('📦 Configuring Cloudinary with:', {
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY ? process.env.CLOUDINARY_API_KEY.substring(0, 5) + '...' : 'undefined',
+    api_secret: process.env.CLOUDINARY_API_SECRET ? process.env.CLOUDINARY_API_SECRET.substring(0, 5) + '...' : 'undefined'
+  });
   
   cloudinary.config({
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
