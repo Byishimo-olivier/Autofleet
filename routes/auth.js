@@ -86,12 +86,9 @@ router.post('/login', async (req, res) => {
       return errorResponse(res, 'Invalid credentials', 401);
     }
 
-    const user = userResult.rows[0];
 
-    // Check if account is active
-    if (user.status !== 'active') {
-      return errorResponse(res, 'Account is inactive. Please contact support.', 401);
-    }
+
+    const user = userResult.rows[0];
 
     // Verify password
     const validPassword = await comparePassword(password, user.password);

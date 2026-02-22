@@ -7,35 +7,28 @@ router.get('/test', (req, res) => {
   res.json({ success: true, message: 'vehicle-images router is active' });
 });
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('cloudinary').v2;
 const pool = require('../config/database');
 const { authenticateToken, requireOwnerOrAdmin } = require('../middleware/auth');
 
-// Multer storage for dynamic vehicle id folder
-const vehicleStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const vehicleId = req.params.id;
-    const dir = `uploads/vehicles/${vehicleId}/`;
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'vehicle-' + uniqueSuffix + path.extname(file.originalname));
-  }
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
 });
-const fileFilter = (req, file, cb) => {
-  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif'];
-  if (allowedTypes.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Invalid file type. Only PNG, JPG, JPEG, and GIF are allowed.'), false);
-  }
-};
+
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: (req, file) => `autofleet/vehicles/${req.params.id}`,
+    allowed_formats: ['png', 'jpg', 'jpeg', 'gif'],
+  },
+});
+
 const vehicleUpload = multer({
-  storage: vehicleStorage,
-  fileFilter,
+  storage: storage,
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB per file
     files: 5
@@ -52,8 +45,8 @@ router.post('/upload/:id', authenticateToken, requireOwnerOrAdmin, vehicleUpload
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No images uploaded' });
     }
-    // Build image paths
-    const imagePaths = req.files.map(file => `/uploads/vehicles/${vehicleId}/${file.filename}`);
+    // Build image paths from Cloudinary secure_url
+    const imagePaths = req.files.map(file => file.path); // Cloudinary sets URL in file.path
     // Fetch current images array from DB
     const result = await pool.query('SELECT images FROM vehicles WHERE id = $1', [vehicleId]);
     let currentImages = [];
