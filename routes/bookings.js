@@ -1565,35 +1565,40 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
   }
 
   try {
-    // 1. Verify transaction with Paystack
+    // 1. Verify transaction with Paypack
+    const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
+    const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
+    const PAYPACK_API_URL = 'https://payments.paypack.rw';
+
     let transactionData = null;
     let amountPaid = null;
-    let currency = 'NGN';
+    let currency = 'RWF';
     
     try {
       const response = await axios.get(
-        `${PAYSTACK_API_URL}/transaction/verify/${transaction_ref}`,
+        `${PAYPACK_API_URL}/api/transactions/${transaction_ref}`,
         {
           headers: {
-            Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
+            'Authorization': `Bearer ${PAYPACK_SECRET_KEY}`,
+            'Content-Type': 'application/json'
           }
         }
       );
       
-      if (response.data.status && response.data.data?.status === 'success') {
-        transactionData = response.data.data;
-        amountPaid = transactionData.amount / 100; // Paystack returns amount in kobo
-        currency = transactionData.currency || 'NGN';
+      if (response.data && response.data.status === 'completed') {
+        transactionData = response.data;
+        amountPaid = transactionData.amount;
+        currency = 'RWF';
       } else {
-        console.warn('Paystack verify returned non-success:', response.data?.status);
+        console.warn('Paypack verify returned non-success:', response.data?.status);
       }
     } catch (verifyErr) {
-      console.warn('Paystack verify API error:', verifyErr.message || verifyErr);
-      return errorResponse(res, 'Failed to verify payment with Paystack', 400);
+      console.warn('Paypack verify API error:', verifyErr.message || verifyErr);
+      return errorResponse(res, 'Failed to verify payment with Paypack', 400);
     }
     
     // If verification failed, return error
-    if (!transactionData || transactionData.status !== 'success') {
+    if (!transactionData || transactionData.status !== 'completed') {
       return errorResponse(res, 'Payment verification failed', 400);
     }
 
@@ -1606,7 +1611,7 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
     }
 
     // Optional: Check if amount matches
-    if (Math.abs(booking.total_amount - amountPaid) > 1) { // Allow $1 difference for rounding/fees if any
+    if (Math.abs(booking.total_amount - amountPaid) > 100) { // Allow 100 RWF difference for rounding/fees
       console.warn(`Amount mismatch: Expected ${booking.total_amount}, Paid ${amountPaid}`);
     }
 
@@ -1616,7 +1621,7 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
       SET status = 'confirmed', 
           payment_status = 'completed',
           payment_transaction_id = $2,
-          payment_method = 'paystack',
+          payment_method = 'paypack',
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
