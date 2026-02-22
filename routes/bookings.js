@@ -1567,17 +1567,23 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
     const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
     const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
     const PAYPACK_API_URL = 'https://payments.paypack.rw';
+    const isTestMode = process.env.PAYPACK_TEST_MODE === 'true';
 
     if (!PAYPACK_APPLICATION_ID || !PAYPACK_SECRET_KEY) {
       console.error('❌ Paypack credentials not configured in .env');
       return errorResponse(res, 'Payment gateway not configured', 500);
     }
 
+    const finalAmount = isTestMode ? 100 : parseFloat(amount);
+    if (isTestMode) {
+      console.log('🚧 Paypack Test Mode: Overriding amount to 100 RWF for simulation.');
+    }
+
     const reference = `autofleet-${booking_id}-${Date.now()}`;
 
     console.log('📱 Initiating Paypack payment:', {
       booking_id,
-      amount,
+      amount: finalAmount,
       number,
       email,
       currency: 'RWF'
@@ -1607,7 +1613,7 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
     const paypackResponse = await axios.post(
       `${PAYPACK_API_URL}/api/transactions/cashin`,
       {
-        amount: parseFloat(amount),
+        amount: finalAmount,
         number: number
       },
       {
@@ -1652,6 +1658,7 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
     const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
     const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
     const PAYPACK_API_URL = 'https://payments.paypack.rw';
+    const isTestMode = process.env.PAYPACK_TEST_MODE === 'true';
 
     let transactionData = null;
     let amountPaid = null;
@@ -1713,7 +1720,7 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
     }
 
     // Optional: Check if amount matches
-    if (Math.abs(booking.total_amount - amountPaid) > 100) { // Allow 100 RWF difference for rounding/fees
+    if (!isTestMode && Math.abs(booking.total_amount - amountPaid) > 100) { // Allow 100 RWF difference for rounding/fees
       console.warn(`Amount mismatch: Expected ${booking.total_amount}, Paid ${amountPaid}`);
     }
 
