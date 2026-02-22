@@ -4,9 +4,10 @@ const pool = require('../config/database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const EmailService = require('../Service/EmailService');
-const Flutterwave = require('flutterwave-node-v3');
+const axios = require('axios');
 
-const flw = new Flutterwave(process.env.FLW_PUBLIC_KEY, process.env.FLW_SECRET_KEY);
+const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
+const PAYSTACK_API_URL = 'https://api.paystack.co';
 
 // Create an instance of EmailService
 const emailService = new EmailService();
@@ -1557,31 +1558,44 @@ router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async 
 
 // Verify Flutterwave Payment
 router.post('/verify-payment', authenticateToken, async (req, res) => {
-  const { transaction_id, booking_id } = req.body;
+  const { transaction_ref, booking_id } = req.body;
 
-  if (!transaction_id || !booking_id) {
-    return errorResponse(res, 'Missing transaction_id or booking_id', 400);
+  if (!transaction_ref || !booking_id) {
+    return errorResponse(res, 'Missing transaction_ref or booking_id', 400);
   }
 
   try {
-    // 1. Verify transaction with Flutterwave
+    // 1. Verify transaction with Paystack
     let transactionData = null;
+    let amountPaid = null;
+    let currency = 'NGN';
+    
     try {
-      const response = await flw.Transaction.verify({ id: Number(transaction_id) });
-      if (response.status === 'success' && response.data?.status === 'successful') {
-        transactionData = response.data;
+      const response = await axios.get(
+        `${PAYSTACK_API_URL}/transaction/verify/${transaction_ref}`,
+        {
+          headers: {
+            Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`
+          }
+        }
+      );
+      
+      if (response.data.status && response.data.data?.status === 'success') {
+        transactionData = response.data.data;
+        amountPaid = transactionData.amount / 100; // Paystack returns amount in kobo
+        currency = transactionData.currency || 'NGN';
       } else {
-        console.warn('Flutterwave verify returned non-success:', response?.status, response?.data?.status);
+        console.warn('Paystack verify returned non-success:', response.data?.status);
       }
     } catch (verifyErr) {
-      // In test mode, mock transaction IDs can't be fetched from Rave API — proceed anyway
-      console.warn('Flutterwave verify API error (test mode mock tx?):', verifyErr.message || verifyErr);
+      console.warn('Paystack verify API error:', verifyErr.message || verifyErr);
+      return errorResponse(res, 'Failed to verify payment with Paystack', 400);
     }
-
-    // If we couldn't verify via API (e.g. test mock), trust the frontend callback status
-    // The callback only reaches here after Flutterwave returns status: 'successful'
-    const amountPaid = transactionData?.amount ?? null;
-    const currency = transactionData?.currency ?? 'RWF';
+    
+    // If verification failed, return error
+    if (!transactionData || transactionData.status !== 'success') {
+      return errorResponse(res, 'Payment verification failed', 400);
+    }
 
     // 2. Fetch booking to verify amount (important for security)
     const { rows: bookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
@@ -1602,10 +1616,11 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
       SET status = 'confirmed', 
           payment_status = 'completed',
           payment_transaction_id = $2,
+          payment_method = 'paystack',
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
-    `, [booking_id, transaction_id]);
+    `, [booking_id, transaction_ref]);
 
     const updatedBooking = updateResult.rows[0];
 
