@@ -7,6 +7,7 @@ const pool = new Pool({
   database: process.env.PGDATABASE || 'autofleet',
   password: process.env.PGPASSWORD || 'password',
   port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
+  ssl: process.env.PGHOST && process.env.PGHOST.includes('render.com') ? { rejectUnauthorized: false } : false,
 });
 
 (async () => {
