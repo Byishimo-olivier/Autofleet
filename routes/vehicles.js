@@ -113,7 +113,8 @@ router.get('/', async (req, res) => {
       search,
       sortBy = 'created_at',
       sortOrder = 'DESC',
-      listing_type
+      listing_type,
+      ownerOnly = false // New parameter to filter by current owner
     } = req.query;
 
     const offset = (page - 1) * limit;
@@ -152,6 +153,16 @@ router.get('/', async (req, res) => {
       (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
       ${isBookedSql}
       FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1`;
+
+    // Filter by owner if ownerOnly is true and user is authenticated
+    if (ownerOnly === 'true' || ownerOnly === true) {
+      const userId = req.headers['x-user-id']; // Pass user ID from frontend
+      if (userId) {
+        sql += ` AND v.owner_id = $${idx}`;
+        params.push(parseInt(userId));
+        idx++;
+      }
+    }
 
     // Price filtering - handle both rent and sale
     if (minPrice) {
