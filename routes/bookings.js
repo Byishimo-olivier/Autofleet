@@ -1568,6 +1568,11 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
     const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
     const PAYPACK_API_URL = 'https://payments.paypack.rw';
 
+    if (!PAYPACK_APPLICATION_ID || !PAYPACK_SECRET_KEY) {
+      console.error('❌ Paypack credentials not configured in .env');
+      return errorResponse(res, 'Payment gateway not configured', 500);
+    }
+
     const reference = `autofleet-${booking_id}-${Date.now()}`;
 
     console.log('📱 Initiating Paypack payment:', {
@@ -1577,34 +1582,56 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
       currency: 'RWF'
     });
 
-    const paypackResponse = await axios.post(
-      `${PAYPACK_API_URL}/api/transactions/initiate`,
+    // Step 1: Authenticate with Paypack to get a JWT access token
+    console.log('🔐 Authenticating with Paypack...');
+    const authResponse = await axios.post(
+      `${PAYPACK_API_URL}/api/auth/agents/authorize`,
       {
-        amount: amount,
-        currency: 'RWF',
-        description: `Autofleet Booking #${booking_id}`,
-        client_name: email,
-        client_email: email,
-        reference: reference
+        client_id: PAYPACK_APPLICATION_ID,
+        client_secret: PAYPACK_SECRET_KEY
+      },
+      {
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+
+    const accessToken = authResponse.data?.access || authResponse.data?.token || authResponse.data?.access_token;
+    if (!accessToken) {
+      console.error('❌ Paypack auth failed - no token returned:', authResponse.data);
+      return errorResponse(res, 'Payment gateway authentication failed', 500);
+    }
+    console.log('✅ Paypack auth successful, got access token');
+
+    // Step 2: Initiate payment using the JWT access token
+    const paypackResponse = await axios.post(
+      `${PAYPACK_API_URL}/api/transactions/cashin`,
+      {
+        amount: parseFloat(amount),
+        number: email,
+        environment: 'production'
       },
       {
         headers: {
-          'Authorization': `Bearer ${PAYPACK_SECRET_KEY}`,
-          'Content-Type': 'application/json'
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
         }
       }
     );
 
     console.log('✅ Paypack initiate response:', paypackResponse.data);
 
-    if (paypackResponse.data.status === 'success' && paypackResponse.data.data?.payment_url) {
+    // Handle Paypack response - check for payment link or ref
+    const responseData = paypackResponse.data;
+    if (responseData?.ref || responseData?.status === 'success' || responseData?.data?.payment_url) {
       return successResponse(res, {
-        payment_url: paypackResponse.data.data.payment_url,
-        reference: reference,
-        transaction_id: paypackResponse.data.data.id
+        payment_url: responseData?.data?.payment_url || responseData?.link || null,
+        reference: responseData?.ref || reference,
+        transaction_id: responseData?.ref || responseData?.data?.id || reference,
+        paypack_response: responseData
       }, 'Payment initiated successfully');
     } else {
-      return errorResponse(res, 'Failed to initiate payment: ' + (paypackResponse.data.message || 'Unknown error'), 400);
+      return errorResponse(res, 'Failed to initiate payment: ' + (responseData?.message || 'Unknown error'), 400);
     }
   } catch (error) {
     console.error('❌ Paypack initiate error:', error.response?.data || error.message);
@@ -1629,19 +1656,38 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
     let transactionData = null;
     let amountPaid = null;
     let currency = 'RWF';
-    
+
     try {
+      // Step 1: Authenticate with Paypack to get a JWT access token
+      const authResponse = await axios.post(
+        `${PAYPACK_API_URL}/api/auth/agents/authorize`,
+        {
+          client_id: PAYPACK_APPLICATION_ID,
+          client_secret: PAYPACK_SECRET_KEY
+        },
+        {
+          headers: { 'Content-Type': 'application/json' }
+        }
+      );
+
+      const accessToken = authResponse.data?.access || authResponse.data?.token || authResponse.data?.access_token;
+      if (!accessToken) {
+        console.error('❌ Paypack auth failed during verification');
+        return errorResponse(res, 'Payment gateway authentication failed', 500);
+      }
+
+      // Step 2: Verify the transaction using the JWT access token
       const response = await axios.get(
-        `${PAYPACK_API_URL}/api/transactions/${transaction_ref}`,
+        `${PAYPACK_API_URL}/api/transactions/find/${transaction_ref}`,
         {
           headers: {
-            'Authorization': `Bearer ${PAYPACK_SECRET_KEY}`,
+            'Authorization': `Bearer ${accessToken}`,
             'Content-Type': 'application/json'
           }
         }
       );
-      
-      if (response.data && response.data.status === 'completed') {
+
+      if (response.data && (response.data.status === 'completed' || response.data.status === 'successful')) {
         transactionData = response.data;
         amountPaid = transactionData.amount;
         currency = 'RWF';
@@ -1649,10 +1695,10 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
         console.warn('Paypack verify returned non-success:', response.data?.status);
       }
     } catch (verifyErr) {
-      console.warn('Paypack verify API error:', verifyErr.message || verifyErr);
+      console.warn('Paypack verify API error:', verifyErr.response?.data || verifyErr.message);
       return errorResponse(res, 'Failed to verify payment with Paypack', 400);
     }
-    
+
     // If verification failed, return error
     if (!transactionData || transactionData.status !== 'completed') {
       return errorResponse(res, 'Payment verification failed', 400);
