@@ -40,7 +40,23 @@ const requireRole = (roles) => {
 const requireAdmin = requireRole(['admin']);
 
 // Middleware to check if user is owner or admin
-const requireOwnerOrAdmin = requireRole(['owner', 'admin']);
+const requireOwnerOrAdmin = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  // Admin can do anything
+  if (req.user.role === 'admin') {
+    return next();
+  }
+
+  // Owner or customer can proceed - vehicle ownership check happens in route handler
+  if (['owner', 'customer'].includes(req.user.role)) {
+    return next();
+  }
+
+  return res.status(403).json({ error: 'Insufficient permissions' });
+};
 
 // Generate JWT token
 const generateToken = (user) => {

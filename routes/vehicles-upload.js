@@ -89,8 +89,27 @@ router.post('/upload/:id', authenticateToken, requireOwnerOrAdmin, vehicleUpload
     console.log('UPLOAD DEBUG: req.files =', req.files);
     console.log('UPLOAD DEBUG: req.body =', req.body);
     const vehicleId = req.params.id;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No images uploaded' });
+    }
+
+    // Verify ownership - check if vehicle belongs to user or user is admin
+    const vehicleCheck = await pool.query('SELECT owner_id FROM vehicles WHERE id = $1', [vehicleId]);
+    if (vehicleCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Vehicle not found' });
+    }
+
+    const vehicle = vehicleCheck.rows[0];
+    if (userRole !== 'admin' && vehicle.owner_id !== userId) {
+      // Try comparing as numbers in case of type mismatch
+      const ownerIdNum = parseInt(vehicle.owner_id);
+      const userIdNum = parseInt(userId);
+      if (ownerIdNum !== userIdNum) {
+        return res.status(403).json({ error: 'Access denied: You can only upload images for your own vehicles' });
+      }
     }
 
     // Build image paths - handle both Cloudinary and local storage

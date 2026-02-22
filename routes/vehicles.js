@@ -976,6 +976,11 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
     const userId = req.user.id;
     const userRole = req.user.role;
 
+    console.log('🔍 PUT /vehicles/:id DEBUG');
+    console.log('  vehicleId:', vehicleId);
+    console.log('  userId:', userId, 'type:', typeof userId);
+    console.log('  userRole:', userRole);
+
     const vehicleResult = await pool.query(`
       SELECT v.*, u.first_name, u.last_name, u.email 
       FROM vehicles v
@@ -984,13 +989,26 @@ router.put('/:id', authenticateToken, requireOwnerOrAdmin, async (req, res) => {
     `, [vehicleId]);
     const vehicle = vehicleResult.rows[0];
 
+    console.log('  vehicle.owner_id:', vehicle?.owner_id, 'type:', typeof vehicle?.owner_id);
+
     if (!vehicle) {
       return errorResponse(res, 'Vehicle not found', 404);
     }
 
     if (userRole !== 'admin' && vehicle.owner_id !== userId) {
-      return errorResponse(res, 'Access denied', 403);
+      // Try comparing as numbers in case of type mismatch
+      const ownerIdNum = parseInt(vehicle.owner_id);
+      const userIdNum = parseInt(userId);
+      if (ownerIdNum !== userIdNum) {
+        console.log('❌ Access denied - ownership check failed');
+        console.log('  userRole !== admin:', userRole !== 'admin');
+        console.log('  owner_id !== userId:', vehicle.owner_id, '!==', userId);
+        console.log('  ownerIdNum !== userIdNum:', ownerIdNum, '!==', userIdNum);
+        return errorResponse(res, 'Access denied', 403);
+      }
     }
+
+    console.log('✅ Ownership check passed');
 
     const {
       make, model, year, type, licensePlate, color, seats,
