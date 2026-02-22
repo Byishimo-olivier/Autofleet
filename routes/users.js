@@ -877,5 +877,80 @@ router.delete('/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
+// ADMIN: Update user role
+router.patch('/admin/update-role/:userId', authenticateToken, requireAdmin, async (req, res) => {
+  const { userId } = req.params;
+  const { role } = req.body;
+
+  if (!userId || !role) {
+    return errorResponse(res, 'Missing userId or role', 400);
+  }
+
+  const validRoles = ['customer', 'owner', 'admin'];
+  if (!validRoles.includes(role)) {
+    return errorResponse(res, 'Invalid role. Must be one of: ' + validRoles.join(', '), 400);
+  }
+
+  try {
+    // Check if user exists
+    const { rows: userRows } = await pool.query('SELECT id, email FROM users WHERE id = $1', [userId]);
+    if (userRows.length === 0) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const user = userRows[0];
+
+    // Update user role
+    const { rows: updatedRows } = await pool.query(
+      'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 RETURNING id, email, first_name, last_name, role, created_at, updated_at',
+      [role, userId]
+    );
+
+    console.log(`✅ User ${user.email} (ID: ${userId}) role updated to ${role}`);
+
+    successResponse(res, updatedRows[0], `User role updated to ${role} successfully`);
+  } catch (err) {
+    console.error('Database error:', err);
+    return errorResponse(res, 'Failed to update user role', 500);
+  }
+});
+
+// ADMIN: Update user role by email
+router.patch('/admin/update-role-by-email', authenticateToken, requireAdmin, async (req, res) => {
+  const { email, role } = req.body;
+
+  if (!email || !role) {
+    return errorResponse(res, 'Missing email or role', 400);
+  }
+
+  const validRoles = ['customer', 'owner', 'admin'];
+  if (!validRoles.includes(role)) {
+    return errorResponse(res, 'Invalid role. Must be one of: ' + validRoles.join(', '), 400);
+  }
+
+  try {
+    // Check if user exists
+    const { rows: userRows } = await pool.query('SELECT id, email FROM users WHERE email = $1', [email]);
+    if (userRows.length === 0) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const user = userRows[0];
+
+    // Update user role
+    const { rows: updatedRows } = await pool.query(
+      'UPDATE users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE email = $2 RETURNING id, email, first_name, last_name, role, created_at, updated_at',
+      [role, email]
+    );
+
+    console.log(`✅ User ${email} (ID: ${user.id}) role updated to ${role}`);
+
+    successResponse(res, updatedRows[0], `User ${email} role updated to ${role} successfully`);
+  } catch (err) {
+    console.error('Database error:', err);
+    return errorResponse(res, 'Failed to update user role', 500);
+  }
+});
+
 module.exports = router;
 

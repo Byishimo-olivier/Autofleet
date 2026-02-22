@@ -8,12 +8,12 @@ const { successResponse, errorResponse } = require('../utils/helpers');
 router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res) => {
   try {
     console.log('=== ADMIN DASHBOARD STATS DEBUG ===');
-    
+
     // Get current month boundaries
     const now = new Date();
     const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    
+
     console.log('Date ranges:', {
       currentMonthStart: currentMonthStart.toISOString().slice(0, 10),
       previousMonthStart: previousMonthStart.toISOString().slice(0, 10)
@@ -24,7 +24,7 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
     try {
       // 1. TOTAL BOOKINGS STATS
       console.log('🔍 Getting booking statistics...');
-      
+
       const bookingStatsQuery = `
         SELECT 
           COUNT(*) as total_bookings,
@@ -32,14 +32,14 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
           COUNT(CASE WHEN created_at >= $2 AND created_at < $1 THEN 1 END) as previous_month_bookings
         FROM bookings
       `;
-      
+
       const bookingStatsResult = await pool.query(bookingStatsQuery, [currentMonthStart, previousMonthStart]);
       const bookingStats = bookingStatsResult.rows[0];
-      
+
       results.totalBookings = parseInt(bookingStats.total_bookings || 0);
       results.currentMonthBookings = parseInt(bookingStats.current_month_bookings || 0);
       results.previousMonthBookings = parseInt(bookingStats.previous_month_bookings || 0);
-      
+
       console.log('📊 Booking Stats:', {
         total: results.totalBookings,
         current: results.currentMonthBookings,
@@ -48,23 +48,23 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
 
       // 2. REVENUE STATS
       console.log('🔍 Getting revenue statistics...');
-      
+
       const revenueStatsQuery = `
         SELECT 
           COALESCE(SUM(total_amount), 0) as total_revenue,
           COALESCE(SUM(CASE WHEN created_at >= $1 THEN total_amount ELSE 0 END), 0) as current_month_revenue,
           COALESCE(SUM(CASE WHEN created_at >= $2 AND created_at < $1 THEN total_amount ELSE 0 END), 0) as previous_month_revenue
         FROM bookings 
-        WHERE payment_status IN ('paid', 'completed')
+        WHERE payment_status = 'paid'
       `;
-      
+
       const revenueStatsResult = await pool.query(revenueStatsQuery, [currentMonthStart, previousMonthStart]);
       const revenueStats = revenueStatsResult.rows[0];
-      
+
       results.totalRevenue = parseFloat(revenueStats.total_revenue || 0);
       results.currentMonthRevenue = parseFloat(revenueStats.current_month_revenue || 0);
       results.previousMonthRevenue = parseFloat(revenueStats.previous_month_revenue || 0);
-      
+
       console.log('💰 Revenue Stats:', {
         total: results.totalRevenue,
         current: results.currentMonthRevenue,
@@ -73,7 +73,7 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
 
       // 3. VEHICLE STATS
       console.log('🔍 Getting vehicle statistics...');
-      
+
       const vehicleStatsQuery = `
         SELECT 
           COUNT(*) as total_vehicles,
@@ -82,21 +82,21 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
           COUNT(CASE WHEN status = 'maintenance' THEN 1 END) as maintenance_vehicles
         FROM vehicles
       `;
-      
+
       const vehicleStatsResult = await pool.query(vehicleStatsQuery);
       const vehicleStats = vehicleStatsResult.rows[0];
-      
+
       results.totalVehicles = parseInt(vehicleStats.total_vehicles || 0);
       results.availableVehicles = parseInt(vehicleStats.available_vehicles || 0);
       results.rentedVehicles = parseInt(vehicleStats.rented_vehicles || 0);
       results.maintenanceVehicles = parseInt(vehicleStats.maintenance_vehicles || 0);
-      
+
       // Calculate utilization rate
       const activeVehicles = results.availableVehicles + results.rentedVehicles;
-      results.utilizationRate = activeVehicles > 0 
-        ? Math.round((results.rentedVehicles / activeVehicles) * 100) 
+      results.utilizationRate = activeVehicles > 0
+        ? Math.round((results.rentedVehicles / activeVehicles) * 100)
         : 0;
-      
+
       console.log('🚗 Vehicle Stats:', {
         total: results.totalVehicles,
         available: results.availableVehicles,
@@ -107,7 +107,7 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
 
       // 4. USER STATS
       console.log('🔍 Getting user statistics...');
-      
+
       const userStatsQuery = `
         SELECT 
           COUNT(*) as total_users,
@@ -116,15 +116,15 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
           COUNT(CASE WHEN role = 'owner' THEN 1 END) as owners
         FROM users
       `;
-      
+
       const userStatsResult = await pool.query(userStatsQuery, [currentMonthStart]);
       const userStats = userStatsResult.rows[0];
-      
+
       results.totalUsers = parseInt(userStats.total_users || 0);
       results.newUsersThisMonth = parseInt(userStats.new_users_this_month || 0);
       results.customers = parseInt(userStats.customers || 0);
       results.owners = parseInt(userStats.owners || 0);
-      
+
       console.log('👥 User Stats:', {
         total: results.totalUsers,
         newThisMonth: results.newUsersThisMonth,
@@ -138,12 +138,12 @@ router.get('/stats/dashboard', authenticateToken, requireAdmin, async (req, res)
     }
 
     // Calculate percentage changes
-    const bookingChange = results.previousMonthBookings > 0 
-      ? ((results.currentMonthBookings - results.previousMonthBookings) / results.previousMonthBookings * 100).toFixed(1) 
+    const bookingChange = results.previousMonthBookings > 0
+      ? ((results.currentMonthBookings - results.previousMonthBookings) / results.previousMonthBookings * 100).toFixed(1)
       : results.currentMonthBookings > 0 ? 100 : 0;
 
-    const revenueChange = results.previousMonthRevenue > 0 
-      ? ((results.currentMonthRevenue - results.previousMonthRevenue) / results.previousMonthRevenue * 100).toFixed(1) 
+    const revenueChange = results.previousMonthRevenue > 0
+      ? ((results.currentMonthRevenue - results.previousMonthRevenue) / results.previousMonthRevenue * 100).toFixed(1)
       : results.currentMonthRevenue > 0 ? 100 : 0;
 
     // Format final response
@@ -198,9 +198,9 @@ router.get('/stats/trends', authenticateToken, requireAdmin, async (req, res) =>
   try {
     const { period = '8' } = req.query;
     const periodInt = parseInt(period) || 8;
-    
+
     console.log('🔍 Getting trends data for', periodInt, 'months');
-    
+
     const trendsQuery = `
       WITH months AS (
         SELECT 
@@ -215,7 +215,7 @@ router.get('/stats/trends', authenticateToken, requireAdmin, async (req, res) =>
         EXTRACT(MONTH FROM m.month) as month_num,
         EXTRACT(YEAR FROM m.month) as year_num,
         COALESCE(COUNT(b.id), 0) as bookings,
-        COALESCE(SUM(CASE WHEN b.payment_status IN ('paid', 'completed') THEN b.total_amount ELSE 0 END), 0) as revenue
+        COALESCE(SUM(CASE WHEN b.payment_status = 'paid' THEN b.total_amount ELSE 0 END), 0) as revenue
       FROM months m
       LEFT JOIN bookings b ON DATE_TRUNC('month', b.created_at) = m.month
       GROUP BY m.month
@@ -245,9 +245,9 @@ router.get('/stats/top-vehicles', authenticateToken, requireAdmin, async (req, r
   try {
     const { limit = 5 } = req.query;
     const limitInt = parseInt(limit) || 5;
-    
+
     console.log('🔍 Getting top', limitInt, 'vehicles');
-    
+
     const query = `
       SELECT 
         v.id,
@@ -256,7 +256,7 @@ router.get('/stats/top-vehicles', authenticateToken, requireAdmin, async (req, r
         v.year,
         v.type,
         COUNT(b.id) as total_bookings,
-        COALESCE(SUM(CASE WHEN b.payment_status IN ('paid', 'completed') THEN b.total_amount ELSE 0 END), 0) as total_revenue
+        COALESCE(SUM(CASE WHEN b.payment_status = 'paid' THEN b.total_amount ELSE 0 END), 0) as total_revenue
       FROM vehicles v
       LEFT JOIN bookings b ON v.id = b.vehicle_id
       GROUP BY v.id, v.make, v.model, v.year, v.type
@@ -289,7 +289,7 @@ router.get('/stats/top-vehicles', authenticateToken, requireAdmin, async (req, r
 router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
   try {
     console.log('🔍 Getting system overview...');
-    
+
     const queries = [
       // User statistics
       `SELECT 
@@ -299,7 +299,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
         COUNT(CASE WHEN role = 'admin' THEN 1 END) as admins,
         COUNT(CASE WHEN created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN 1 END) as new_this_month
        FROM users`,
-      
+
       // Vehicle statistics
       `SELECT 
         COUNT(*) as total,
@@ -307,7 +307,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
         COUNT(CASE WHEN status = 'rented' THEN 1 END) as rented,
         COUNT(CASE WHEN status = 'maintenance' THEN 1 END) as maintenance
        FROM vehicles`,
-      
+
       // Booking statistics
       `SELECT 
         COUNT(*) as total,
@@ -316,13 +316,13 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
         COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
         COUNT(CASE WHEN status = 'cancelled' THEN 1 END) as cancelled
        FROM bookings`,
-      
+
       // Revenue statistics
       `SELECT 
         COALESCE(SUM(total_amount), 0) as total_revenue,
         COALESCE(SUM(CASE WHEN created_at >= DATE_TRUNC('month', CURRENT_DATE) THEN total_amount ELSE 0 END), 0) as monthly_revenue
        FROM bookings 
-       WHERE payment_status IN ('paid', 'completed')`
+       WHERE payment_status = 'paid'`
     ];
 
     const results = await Promise.all(queries.map(q => pool.query(q)));
@@ -357,8 +357,8 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
 
     // Calculate utilization rate
     const activeVehicles = overview.vehicles.available + overview.vehicles.rented;
-    overview.vehicles.utilizationRate = activeVehicles > 0 
-      ? Math.round((overview.vehicles.rented / activeVehicles) * 100) 
+    overview.vehicles.utilizationRate = activeVehicles > 0
+      ? Math.round((overview.vehicles.rented / activeVehicles) * 100)
       : 0;
 
     console.log('📊 System Overview:', overview);
@@ -374,7 +374,7 @@ router.get('/overview', authenticateToken, requireAdmin, async (req, res) => {
 router.get('/notifications', authenticateToken, requireAdmin, async (req, res) => {
   try {
     console.log('🔍 Getting system notifications...');
-    
+
     const results = {};
 
     try {
@@ -440,7 +440,7 @@ router.get('/notifications', authenticateToken, requireAdmin, async (req, res) =
 function getVehicleColor(index) {
   const colors = [
     'bg-red-200 text-red-700',
-    'bg-blue-200 text-blue-700', 
+    'bg-blue-200 text-blue-700',
     'bg-green-200 text-green-700',
     'bg-yellow-200 text-yellow-700',
     'bg-purple-200 text-purple-700',

@@ -80,7 +80,11 @@ try {
   console.log("Loading /api/admin...");
   app.use('/api/admin', require('./routes/admin'));
 
+  console.log("Loading /api/ai...");
+  app.use('/api/ai', require('./routes/ai'));
+
   console.log("All routes loaded successfully!");
+
 } catch (err) {
   console.error("Error loading routes:", err);
 }
@@ -97,35 +101,35 @@ app.get('/api/health', (req, res) => {
 // ----------------------
 app.use((err, req, res, next) => {
   console.error('Error stack:', err.stack);
-  
+
   // Handle multer errors
   if (err.name === 'MulterError') {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'File too large. Maximum size is 10MB per file.' 
+        message: 'File too large. Maximum size is 10MB per file.'
       });
     }
     if (err.code === 'LIMIT_FILE_COUNT') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Too many files. Maximum is 5 files.' 
+        message: 'Too many files. Maximum is 5 files.'
       });
     }
     if (err.code === 'LIMIT_UNEXPECTED_FILE') {
-      return res.status(400).json({ 
+      return res.status(400).json({
         success: false,
-        message: 'Unexpected field name in file upload.' 
+        message: 'Unexpected field name in file upload.'
       });
     }
-    return res.status(400).json({ 
+    return res.status(400).json({
       success: false,
-      message: `Upload error: ${err.message}` 
+      message: `Upload error: ${err.message}`
     });
   }
-  
+
   // Handle other errors
-  res.status(500).json({ 
+  res.status(500).json({
     success: false,
     error: 'Something went wrong!',
     message: process.env.NODE_ENV === 'development' ? err.message : undefined
@@ -136,10 +140,10 @@ app.use((err, req, res, next) => {
 // 404 handler (catch-all)
 // ----------------------
 app.use((req, res) => {
-  res.status(404).json({ 
+  res.status(404).json({
     success: false,
     error: 'Route not found',
-    path: req.path 
+    path: req.path
   });
 });
 
