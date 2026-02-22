@@ -1555,6 +1555,62 @@ router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async 
   }
 });
 
+// Initiate Paypack Payment
+router.post('/initiate-payment', authenticateToken, async (req, res) => {
+  const { booking_id, amount, email } = req.body;
+
+  if (!booking_id || !amount || !email) {
+    return errorResponse(res, 'Missing booking_id, amount, or email', 400);
+  }
+
+  try {
+    const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
+    const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
+    const PAYPACK_API_URL = 'https://payments.paypack.rw';
+
+    const reference = `autofleet-${booking_id}-${Date.now()}`;
+
+    console.log('📱 Initiating Paypack payment:', {
+      booking_id,
+      amount,
+      email,
+      currency: 'RWF'
+    });
+
+    const paypackResponse = await axios.post(
+      `${PAYPACK_API_URL}/api/transactions/initiate`,
+      {
+        amount: amount,
+        currency: 'RWF',
+        description: `Autofleet Booking #${booking_id}`,
+        client_name: email,
+        client_email: email,
+        reference: reference
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${PAYPACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log('✅ Paypack initiate response:', paypackResponse.data);
+
+    if (paypackResponse.data.status === 'success' && paypackResponse.data.data?.payment_url) {
+      return successResponse(res, {
+        payment_url: paypackResponse.data.data.payment_url,
+        reference: reference,
+        transaction_id: paypackResponse.data.data.id
+      }, 'Payment initiated successfully');
+    } else {
+      return errorResponse(res, 'Failed to initiate payment: ' + (paypackResponse.data.message || 'Unknown error'), 400);
+    }
+  } catch (error) {
+    console.error('❌ Paypack initiate error:', error.response?.data || error.message);
+    return errorResponse(res, 'Failed to initiate payment: ' + (error.response?.data?.message || error.message), 500);
+  }
+});
 
 // Verify Flutterwave Payment
 router.post('/verify-payment', authenticateToken, async (req, res) => {
