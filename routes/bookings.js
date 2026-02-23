@@ -4,13 +4,27 @@ const pool = require('../config/database');
 const { authenticateToken, requireAdmin } = require('../middleware/auth');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const EmailService = require('../Service/EmailService');
+const PaypackService = require('../Service/PaypackService');
 const axios = require('axios');
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_API_URL = 'https://api.paystack.co';
 
-// Create an instance of EmailService
+// Create instances of services
 const emailService = new EmailService();
+
+// Lazy initialize PaypackService - only when needed
+let paypackService = null;
+const getPaypackService = () => {
+  if (!paypackService) {
+    try {
+      paypackService = new PaypackService();
+    } catch (error) {
+      throw new Error(`Paypack not configured: ${error.message}`);
+    }
+  }
+  return paypackService;
+};
 
 // Get active bookings (confirmed and ongoing)
 router.get('/active', authenticateToken, async (req, res) => {
@@ -1557,95 +1571,41 @@ router.post('/admin/notify-new-booking', authenticateToken, requireAdmin, async 
 
 // Initiate Paypack Payment
 router.post('/initiate-payment', authenticateToken, async (req, res) => {
-  const { booking_id, amount, email, number } = req.body;
+  const { booking_id, amount, number } = req.body;
 
   if (!booking_id || !amount || !number) {
     return errorResponse(res, 'Missing booking_id, amount, or phone number', 400);
   }
 
   try {
-    const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
-    const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
-    const PAYPACK_API_URL = 'https://payments.paypack.rw';
-    const isTestMode = process.env.PAYPACK_TEST_MODE === 'true';
-
-    if (!PAYPACK_APPLICATION_ID || !PAYPACK_SECRET_KEY) {
-      console.error('❌ Paypack credentials not configured in .env');
-      return errorResponse(res, 'Payment gateway not configured', 500);
-    }
-
-    const finalAmount = isTestMode ? 100 : parseFloat(amount);
-    if (isTestMode) {
-      console.log('🚧 Paypack Test Mode: Overriding amount to 100 RWF for simulation.');
-    }
-
-    const reference = `autofleet-${booking_id}-${Date.now()}`;
-
-    console.log('📱 Initiating Paypack payment:', {
+    const paypack = getPaypackService();
+    
+    const result = await paypack.createPayment({
       booking_id,
-      amount: finalAmount,
-      number,
-      email,
-      currency: 'RWF'
+      amount,
+      phone_number: number
     });
 
-    // Step 1: Authenticate with Paypack to get a JWT access token
-    console.log('🔐 Authenticating with Paypack...');
-    const authResponse = await axios.post(
-      `${PAYPACK_API_URL}/api/auth/agents/authorize`,
-      {
-        client_id: PAYPACK_APPLICATION_ID,
-        client_secret: PAYPACK_SECRET_KEY
-      },
-      {
-        headers: { 'Content-Type': 'application/json' }
+    // Add USSD/POP message information to response
+    const paymentResponse = {
+      ...result,
+      message: `✅ Payment initiated! A USSD prompt will be sent to ${number}. Please enter your PIN to confirm the payment.`,
+      instructions: {
+        step1: 'Check your phone for a payment confirmation message',
+        step2: 'A USSD pop-up will appear with payment details',
+        step3: 'Enter your PIN to confirm',
+        step4: 'Return to this page and click "Verify Payment"'
       }
-    );
+    };
 
-    const accessToken = authResponse.data?.access || authResponse.data?.token || authResponse.data?.access_token;
-    if (!accessToken) {
-      console.error('❌ Paypack auth failed - no token returned:', authResponse.data);
-      return errorResponse(res, 'Payment gateway authentication failed', 500);
-    }
-    console.log('✅ Paypack auth successful, got access token');
-
-    // Step 2: Initiate payment using the JWT access token
-    const paypackResponse = await axios.post(
-      `${PAYPACK_API_URL}/api/transactions/cashin`,
-      {
-        amount: finalAmount,
-        number: number
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      }
-    );
-
-    console.log('✅ Paypack initiate response:', paypackResponse.data);
-
-    // Handle Paypack response - check for payment link or ref
-    const responseData = paypackResponse.data;
-    if (responseData?.ref || responseData?.status === 'success' || responseData?.data?.payment_url) {
-      return successResponse(res, {
-        payment_url: responseData?.data?.payment_url || responseData?.link || null,
-        reference: responseData?.ref || reference,
-        transaction_id: responseData?.ref || responseData?.data?.id || reference,
-        paypack_response: responseData
-      }, 'Payment initiated successfully');
-    } else {
-      return errorResponse(res, 'Failed to initiate payment: ' + (responseData?.message || 'Unknown error'), 400);
-    }
+    return successResponse(res, paymentResponse, 'Payment initiated successfully - Check your phone');
   } catch (error) {
-    console.error('❌ Paypack initiate error:', error.response?.data || error.message);
-    return errorResponse(res, 'Failed to initiate payment: ' + (error.response?.data?.message || error.message), 500);
+    console.error('❌ Payment initiation failed:', error.message);
+    return errorResponse(res, `Failed to initiate payment: ${error.message}`, 500);
   }
 });
 
-// Verify Flutterwave Payment
+// Verify Paypack Payment
 router.post('/verify-payment', authenticateToken, async (req, res) => {
   const { transaction_ref, booking_id } = req.body;
 
@@ -1654,64 +1614,17 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
   }
 
   try {
-    // 1. Verify transaction with Paypack
-    const PAYPACK_APPLICATION_ID = process.env.PAYPACK_APPLICATINON_ID;
-    const PAYPACK_SECRET_KEY = process.env.PAYPACK_APPLICATION_SECRET_KEY;
-    const PAYPACK_API_URL = 'https://payments.paypack.rw';
-    const isTestMode = process.env.PAYPACK_TEST_MODE === 'true';
+    const paypack = getPaypackService();
+    
+    // 1. Verify transaction with Paypack service
+    const transactionData = await paypack.verifyPayment(transaction_ref);
 
-    let transactionData = null;
-    let amountPaid = null;
-    let currency = 'RWF';
-
-    try {
-      // Step 1: Authenticate with Paypack to get a JWT access token
-      const authResponse = await axios.post(
-        `${PAYPACK_API_URL}/api/auth/agents/authorize`,
-        {
-          client_id: PAYPACK_APPLICATION_ID,
-          client_secret: PAYPACK_SECRET_KEY
-        },
-        {
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-
-      const accessToken = authResponse.data?.access || authResponse.data?.token || authResponse.data?.access_token;
-      if (!accessToken) {
-        console.error('❌ Paypack auth failed during verification');
-        return errorResponse(res, 'Payment gateway authentication failed', 500);
-      }
-
-      // Step 2: Verify the transaction using the JWT access token
-      const response = await axios.get(
-        `${PAYPACK_API_URL}/api/transactions/find/${transaction_ref}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-
-      if (response.data && (response.data.status === 'completed' || response.data.status === 'successful')) {
-        transactionData = response.data;
-        amountPaid = transactionData.amount;
-        currency = 'RWF';
-      } else {
-        console.warn('Paypack verify returned non-success:', response.data?.status);
-      }
-    } catch (verifyErr) {
-      console.warn('Paypack verify API error:', verifyErr.response?.data || verifyErr.message);
-      return errorResponse(res, 'Failed to verify payment with Paypack', 400);
-    }
-
-    // If verification failed, return error
-    if (!transactionData || transactionData.status !== 'completed') {
+    // Check if payment was successful
+    if (!transactionData || (transactionData.status !== 'completed' && transactionData.status !== 'successful')) {
       return errorResponse(res, 'Payment verification failed', 400);
     }
 
-    // 2. Fetch booking to verify amount (important for security)
+    // 2. Fetch booking to verify amount
     const { rows: bookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
     const booking = bookingRows[0];
 
@@ -1719,24 +1632,15 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
       return errorResponse(res, 'Booking not found', 404);
     }
 
-    // Optional: Check if amount matches
-    if (!isTestMode && Math.abs(booking.total_amount - amountPaid) > 100) { // Allow 100 RWF difference for rounding/fees
-      console.warn(`Amount mismatch: Expected ${booking.total_amount}, Paid ${amountPaid}`);
-    }
+    // 3. Update booking via webhook handler
+    const webhookPayload = {
+      reference: transaction_ref,
+      status: 'completed',
+      amount: transactionData.amount,
+      paid_at: new Date().toISOString()
+    };
 
-    // 3. Update booking status and transaction ID
-    const updateResult = await pool.query(`
-      UPDATE bookings 
-      SET status = 'confirmed', 
-          payment_status = 'completed',
-          payment_transaction_id = $2,
-          payment_method = 'paypack',
-          updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
-      RETURNING *
-    `, [booking_id, transaction_ref]);
-
-    const updatedBooking = updateResult.rows[0];
+    await paypack.handlePaypackWebhook(webhookPayload);
 
     // 4. Update vehicle status based on listing type
     const { rows: vehicleRows } = await pool.query('SELECT listing_type FROM vehicles WHERE id = $1', [booking.vehicle_id]);
@@ -1749,12 +1653,15 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
       }
 
       await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', [newVehicleStatus, booking.vehicle_id]);
-      console.log(`Vehicle ${booking.vehicle_id} status updated to ${newVehicleStatus}`);
+      console.log(`✅ Vehicle ${booking.vehicle_id} status updated to ${newVehicleStatus}`);
     }
 
-    // 5. Send confirmation emails
+    // 5. Fetch and return updated booking
+    const { rows: updatedBookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
+    const updatedBooking = updatedBookingRows[0];
+
+    // 6. Send confirmation emails (Non-blocking)
     try {
-      // Re-fetch full details for email
       const { rows: fullBookingRows } = await pool.query(`
         SELECT b.*, 
                v.make, v.model, v.year, v.license_plate, v.images, v.daily_rate, v.selling_price, v.listing_type,
@@ -1784,28 +1691,48 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
           license_plate: fullBooking.license_plate
         };
 
-        // Send confirmation email to customer (Non-blocking)
+        // Send confirmation email to customer
         emailService.sendBookingConfirmation(fullBooking, customer, emailVehicle, owner)
           .catch(err => console.error('❌ Failed to send booking confirmation email:', err));
 
-        // Send payment confirmation email to customer (Non-blocking)
+        // Send payment confirmation email to customer
         emailService.sendPaymentConfirmation(fullBooking, customer, {
-          method: fullBooking.payment_method,
-          transaction_id: transaction_id
+          method: 'paypack',
+          transaction_id: transaction_ref
         }).catch(err => console.error('❌ Failed to send payment confirmation email:', err));
 
-        // Send new booking notification to owner (Non-blocking)
+        // Send new booking notification to owner
         emailService.sendNewBookingNotification(fullBooking, customer, emailVehicle, owner)
           .catch(err => console.error('❌ Failed to send owner notification email:', err));
       }
     } catch (emailErr) {
-      console.error('Failed to send confirmation emails:', emailErr);
+      console.error('⚠️  Failed to send confirmation emails:', emailErr);
     }
 
     successResponse(res, updatedBooking, 'Payment verified and booking confirmed');
-  } catch (err) {
-    console.error('Error verifying payment:', err);
-    errorResponse(res, 'An error occurred during payment verification', 500);
+  } catch (error) {
+    console.error('❌ Payment verification error:', error.message);
+    return errorResponse(res, `Payment verification failed: ${error.message}`, 500);
+  }
+});
+
+// Paypack Webhook Callback Handler
+// This endpoint receives payment status updates from Paypack
+router.post('/webhook/paypack', async (req, res) => {
+  try {
+    console.log('📨 Paypack webhook received:', JSON.stringify(req.body, null, 2));
+
+    const paypack = getPaypackService();
+    
+    // Process the webhook
+    await paypack.handlePaypackWebhook(req.body);
+
+    // Always return 200 OK to acknowledge receipt
+    res.status(200).json({ message: 'Webhook received and processed' });
+  } catch (error) {
+    console.error('❌ Webhook processing error:', error.message);
+    // Still return 200 to prevent Paypack from retrying
+    res.status(200).json({ message: 'Webhook processed with errors', error: error.message });
   }
 });
 
