@@ -807,6 +807,98 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+// ADMIN: Update user information (name, email, phone, role)
+router.put('/admin/:id', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { first_name, last_name, email, phone, role } = req.body;
+
+    // Validate user ID
+    const userIdInt = parseInt(userId);
+    if (isNaN(userIdInt)) {
+      return errorResponse(res, 'Invalid user ID', 400);
+    }
+
+    // Build update query dynamically
+    const updates = [];
+    const params = [];
+    let paramCount = 1;
+
+    if (first_name !== undefined) {
+      updates.push(`first_name = $${paramCount++}`);
+      params.push(first_name);
+    }
+
+    if (last_name !== undefined) {
+      updates.push(`last_name = $${paramCount++}`);
+      params.push(last_name);
+    }
+
+    if (email !== undefined) {
+      // Check if email already exists (excluding current user)
+      const emailExists = await pool.query(
+        'SELECT id FROM users WHERE email = $1 AND id != $2',
+        [email, userIdInt]
+      );
+
+      if (emailExists.rows.length > 0) {
+        return errorResponse(res, 'Email already in use', 400);
+      }
+
+      updates.push(`email = $${paramCount++}`);
+      params.push(email);
+    }
+
+    if (phone !== undefined) {
+      updates.push(`phone = $${paramCount++}`);
+      params.push(phone);
+    }
+
+    if (role !== undefined) {
+      if (!['customer', 'owner', 'admin'].includes(role)) {
+        return errorResponse(res, 'Invalid role. Must be customer, owner, or admin', 400);
+      }
+      updates.push(`role = $${paramCount++}`);
+      params.push(role);
+    }
+
+    if (updates.length === 0) {
+      return errorResponse(res, 'No fields to update', 400);
+    }
+
+    // Always update the updated_at timestamp
+    updates.push(`updated_at = NOW()`);
+
+    // Add user ID as the last parameter
+    params.push(userIdInt);
+
+    const sql = `UPDATE users SET ${updates.join(', ')} WHERE id = $${paramCount} RETURNING *`;
+
+    console.log('🔄 Updating user:', { userId: userIdInt, updates: updates.join(', ') });
+
+    const result = await pool.query(sql, params);
+
+    if (result.rows.length === 0) {
+      return errorResponse(res, 'User not found', 404);
+    }
+
+    const updatedUser = result.rows[0];
+
+    console.log('✅ User updated successfully:', {
+      id: updatedUser.id,
+      first_name: updatedUser.first_name,
+      last_name: updatedUser.last_name,
+      email: updatedUser.email,
+      role: updatedUser.role
+    });
+
+    successResponse(res, updatedUser, 'User updated successfully');
+  } catch (err) {
+    console.error('❌ Database error updating user:', err);
+    return errorResponse(res, 'Failed to update user', 500);
+  }
+});
+
 // Update user role (admin only)
 router.put('/:id/role', authenticateToken, requireAdmin, async (req, res) => {
   try {
