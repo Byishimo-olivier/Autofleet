@@ -1,59 +1,77 @@
 const axios = require('axios');
 const pool = require('../config/database');
+const paypackConfig = require('../config/paypackconfig');
 
 class PaypackService {
   constructor(config = {}) {
     this.paypackConfig = {
-      key: config.key || process.env.PAYPACK_APPLICATINON_ID,
-      secret: config.secret || process.env.PAYPACK_APPLICATION_SECRET_KEY,
-      url: config.url || process.env.PAYPACK_API_URL || 'https://payments.paypack.rw',
-      currency: config.currency || process.env.PAYPACK_CURRENCY || 'RWF',
+      key: config.key || paypackConfig.apiKey,
+      secret: config.secret || paypackConfig.apiSecret,
+      // baseUrl already includes /api → https://payments.paypack.rw/api
+      baseUrl: config.url || paypackConfig.baseUrl || 'https://payments.paypack.rw/api',
+      currency: config.currency || paypackConfig.currency || 'RWF',
       testMode: process.env.PAYPACK_TEST_MODE === 'true'
     };
 
     if (!this.paypackConfig.key || !this.paypackConfig.secret) {
-      throw new Error('PayPack configuration missing: API_ID and API_SECRET are required');
+      throw new Error(
+        'PayPack configuration missing: PAYPACK_API_KEY and PAYPACK_API_SECRET are required'
+      );
     }
+
+    console.log('🔧 PaypackService initialized with baseUrl:', this.paypackConfig.baseUrl);
   }
 
   /**
    * Authenticate with Paypack and get JWT access token
-   * @returns {Promise<string>} - Access token
+   * Endpoint: POST /api/auth/agents/authorize
    */
   async login() {
     try {
       console.log('🔐 Authenticating with Paypack...');
-      
+
+      const url = `${this.paypackConfig.baseUrl}/auth/agents/authorize`;
+      console.log('   → POST', url);
+
       const response = await axios.post(
-        `${this.paypackConfig.url}/api/auth/agents/authorize`,
+        url,
         {
           client_id: this.paypackConfig.key,
           client_secret: this.paypackConfig.secret
         },
         {
-          headers: { 'Content-Type': 'application/json' }
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
         }
       );
 
-      const token = response.data?.access || response.data?.token || response.data?.access_token;
+      // Paypack returns { access, refresh }
+      const token =
+        response.data?.access ||
+        response.data?.token ||
+        response.data?.access_token;
 
       if (!token) {
-        throw new Error('Failed to obtain PayPack token');
+        console.error('Auth response data:', response.data);
+        throw new Error('Failed to obtain PayPack token — check API credentials');
       }
 
       console.log('✅ Paypack authentication successful');
       return token;
     } catch (error) {
-      console.error('❌ Paypack authentication failed:', error.response?.data || error.message);
-      throw new Error(`PayPack auth failed: ${error.message}`);
+      const detail = error.response?.data || error.message;
+      console.error('❌ Paypack authentication failed:', detail);
+      throw new Error(`PayPack auth failed: ${JSON.stringify(detail)}`);
     }
   }
 
   /**
-   * Request payment from Paypack
-   * @param {number} amount - Payment amount
-   * @param {string} number - Phone number for payment
-   * @returns {Promise<object>} - Payment response
+   * Request payment (cashin) from Paypack
+   * Endpoint: POST /api/transactions/cashin
+   * @param {number} amount
+   * @param {string} number - Mobile money phone number e.g. 078xxxxxxx
    */
   async requestPayment(amount, number) {
     try {
@@ -64,20 +82,12 @@ class PaypackService {
         console.log('🚧 Paypack Test Mode: Amount overridden to 100 RWF');
       }
 
-      console.log('📱 Initiating Paypack payment:', {
-        amount: finalAmount,
-        number,
-        currency: this.paypackConfig.currency
-      });
-
-      const endpoint = `${this.paypackConfig.url}/api/transactions/cashin`;
+      const url = `${this.paypackConfig.baseUrl}/transactions/cashin`;
+      console.log('📱 Initiating Paypack cashin:', { url, amount: finalAmount, number });
 
       const response = await axios.post(
-        endpoint,
-        {
-          amount: finalAmount,
-          number: number
-        },
+        url,
+        { amount: finalAmount, number },
         {
           headers: {
             'Authorization': `Bearer ${token}`,
@@ -87,61 +97,60 @@ class PaypackService {
         }
       );
 
-      console.log('✅ Paypack payment initiated:', response.data);
+      console.log('✅ Paypack cashin initiated:', response.data);
       return response.data;
     } catch (error) {
-      console.error('❌ Paypack payment request failed:', error.response?.data || error.message);
-      throw new Error(`PayPack request payment failed: ${error.message}`);
+      const detail = error.response?.data || error.message;
+      console.error('❌ Paypack cashin failed:', detail);
+      throw new Error(`PayPack request payment failed: ${JSON.stringify(detail)}`);
     }
   }
 
   /**
    * Verify a payment transaction
-   * @param {string} reference - Transaction reference
-   * @returns {Promise<object>} - Transaction details
+   * Endpoint: GET /api/transactions/find/{ref}
+   * @param {string} reference
    */
   async verifyPayment(reference) {
     try {
       const token = await this.login();
 
-      console.log('🔍 Verifying Paypack transaction:', reference);
+      const url = `${this.paypackConfig.baseUrl}/transactions/find/${reference}`;
+      console.log('🔍 Verifying Paypack transaction:', url);
 
       try {
-        const response = await axios.get(
-          `${this.paypackConfig.url}/api/transactions/find/${reference}`,
-          {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json'
-            }
+        const response = await axios.get(url, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
           }
-        );
+        });
 
         console.log('✅ Paypack verification successful:', response.data);
         return response.data;
       } catch (verifyError) {
         // In test mode, transactions may not be immediately queryable
-        // If we get a 404 in test mode, treat the payment as successful since it was initiated
         if (this.paypackConfig.testMode && verifyError.response?.status === 404) {
-          console.log('⚠️  Test mode: Transaction not immediately queryable, treating as pending/successful');
+          console.log('⚠️  Test mode: Transaction not found, treating as pending');
           return {
             ref: reference,
-            status: 'completed',
-            amount: 100, // Test mode amount
+            status: 'pending',
+            amount: 100,
             kind: 'CASHIN'
           };
         }
         throw verifyError;
       }
     } catch (error) {
-      console.error('❌ Paypack verification failed:', error.response?.data || error.message);
-      throw new Error(`PayPack verification failed: ${error.message}`);
+      const detail = error.response?.data || error.message;
+      console.error('❌ Paypack verification failed:', detail);
+      throw new Error(`PayPack verification failed: ${JSON.stringify(detail)}`);
     }
   }
 
   /**
    * Handle Paypack webhook callback
-   * Updates booking and payment status based on webhook payload
    * @param {object} payload - Webhook payload from Paypack
    */
   async handlePaypackWebhook(payload) {
@@ -150,7 +159,6 @@ class PaypackService {
 
       console.log('📨 Processing Paypack webhook:', { reference, status });
 
-      // Find booking by transaction reference
       const bookingResult = await pool.query(
         `SELECT b.*, v.owner_id FROM bookings b
          LEFT JOIN vehicles v ON b.vehicle_id = v.id
@@ -167,21 +175,16 @@ class PaypackService {
       let paymentStatus = 'pending';
       let bookingStatus = 'pending';
 
-      // Update statuses based on payment status
       if (status === 'completed' || status === 'successful') {
         paymentStatus = 'paid';
         bookingStatus = 'confirmed';
       } else if (status === 'failed') {
         paymentStatus = 'failed';
         bookingStatus = 'cancelled';
-      } else if (status === 'pending') {
-        paymentStatus = 'pending';
       }
 
-      // Store gateway response
       const gatewayResponse = JSON.stringify(payload);
 
-      // Update booking in database
       await pool.query(
         `UPDATE bookings 
          SET payment_status = $1, 
@@ -193,14 +196,11 @@ class PaypackService {
         [paymentStatus, bookingStatus, gatewayResponse, booking.id]
       );
 
-      console.log(`✅ Booking #${booking.id} updated: status=${bookingStatus}, payment_status=${paymentStatus}`);
-
-      // Return updated booking
-      const updatedBooking = await pool.query(
-        'SELECT * FROM bookings WHERE id = $1',
-        [booking.id]
+      console.log(
+        `✅ Booking #${booking.id} updated: status=${bookingStatus}, payment=${paymentStatus}`
       );
 
+      const updatedBooking = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking.id]);
       return updatedBooking.rows[0];
     } catch (error) {
       console.error('❌ Webhook processing failed:', error.message);
@@ -209,17 +209,12 @@ class PaypackService {
   }
 
   /**
-   * Create payment transaction and update booking
-   * @param {object} options - Payment options
-   * @returns {Promise<object>} - Payment reference and booking details
+   * Create payment and link to booking
+   * @param {object} options
    */
   async createPayment({ booking_id, amount, phone_number }) {
     try {
-      // Validate booking exists
-      const bookingResult = await pool.query(
-        'SELECT * FROM bookings WHERE id = $1',
-        [booking_id]
-      );
+      const bookingResult = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
 
       if (bookingResult.rows.length === 0) {
         throw new Error(`Booking #${booking_id} not found`);
@@ -227,26 +222,21 @@ class PaypackService {
 
       const booking = bookingResult.rows[0];
 
-      // Request payment from Paypack
       const paymentResponse = await this.requestPayment(amount, phone_number);
 
-      // Store reference for webhook verification
-      const reference = paymentResponse?.ref || paymentResponse?.data?.id;
+      // Paypack returns { ref, amount, status, kind, created_at }
+      const reference = paymentResponse?.ref || paymentResponse?.data?.ref;
 
-      if (reference) {
-        // Update booking with transaction reference if not already set
-        if (!booking.payment_transaction_id) {
-          await pool.query(
-            'UPDATE bookings SET payment_transaction_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
-            [reference, booking_id]
-          );
-        }
+      if (reference && !booking.payment_transaction_id) {
+        await pool.query(
+          'UPDATE bookings SET payment_transaction_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+          [reference, booking_id]
+        );
       }
 
       return {
         success: true,
         reference,
-        payment_url: paymentResponse?.data?.payment_url || null,
         booking_id,
         paypack_response: paymentResponse
       };
