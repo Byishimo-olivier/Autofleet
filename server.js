@@ -3,6 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const path = require('path');
 require('dotenv').config();
+const { startPaypackAutoSync } = require('./Service/PaypackSyncService');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -83,6 +84,9 @@ try {
   console.log("Loading /api/ai...");
   app.use('/api/ai', require('./routes/ai'));
 
+  console.log("Loading /api/tracking...");
+  app.use('/api/tracking', require('./routes/tracking'));
+
   console.log("All routes loaded successfully!");
 
 } catch (err) {
@@ -157,5 +161,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`========================================`);
 });
+
+startPaypackAutoSync();
 
 module.exports = app;

@@ -945,6 +945,34 @@ router.put('/:id/status', authenticateToken, async (req, res) => {
       return errorResponse(res, 'Access denied or invalid status transition', 403);
     }
 
+    if (['confirmed', 'active', 'completed'].includes(status) && booking.payment_status !== 'paid') {
+      try {
+        if (booking.payment_method === 'mobile' && booking.payment_transaction_id) {
+          const paypack = getPaypackService();
+          const transactionData = await paypack.verifyPayment(booking.payment_transaction_id);
+          if (transactionData && (transactionData.status === 'completed' || transactionData.status === 'successful')) {
+            await paypack.handlePaypackWebhook({
+              reference: booking.payment_transaction_id,
+              status: 'completed',
+              amount: transactionData.amount,
+              paid_at: new Date().toISOString(),
+              booking_id: booking.id
+            });
+            const { rows: refreshedRows } = await pool.query('SELECT payment_status FROM bookings WHERE id = $1', [booking.id]);
+            if (refreshedRows[0]?.payment_status !== 'paid') {
+              return errorResponse(res, 'Payment verification pending. Please try again shortly.', 409);
+            }
+          } else {
+            return errorResponse(res, 'Cannot update booking status until payment is confirmed', 409);
+          }
+        } else {
+          return errorResponse(res, 'Cannot update booking status until payment is confirmed', 409);
+        }
+      } catch (verifyErr) {
+        return errorResponse(res, 'Payment verification pending. Please try again shortly.', 409);
+      }
+    }
+
     // Update booking status
     await pool.query(`
       UPDATE bookings 
@@ -1611,6 +1639,12 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
       amount,
       phone_number: normalizedNumber
     });
+    if (result.reference) {
+      await pool.query(
+        'UPDATE bookings SET payment_transaction_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [result.reference, booking_id]
+      );
+    }
 
     // Add USSD/POP message information to response
     const paymentResponse = {
@@ -1646,7 +1680,12 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
     const transactionData = await paypack.verifyPayment(transaction_ref);
 
     // Check if payment was successful
-    if (!transactionData || (transactionData.status !== 'completed' && transactionData.status !== 'successful')) {
+    const isSuccess = transactionData && (
+      transactionData.status === 'completed' ||
+      transactionData.status === 'successful' ||
+      (!transactionData.status && process.env.PAYPACK_TEST_MODE === 'true' && transactionData.ref)
+    );
+    if (!isSuccess) {
       return errorResponse(res, 'Payment verification failed', 400);
     }
 
@@ -1663,29 +1702,32 @@ router.post('/verify-payment', authenticateToken, async (req, res) => {
       reference: transaction_ref,
       status: 'completed',
       amount: transactionData.amount,
-      paid_at: new Date().toISOString()
+      paid_at: new Date().toISOString(),
+      booking_id
     };
 
     await paypack.handlePaypackWebhook(webhookPayload);
 
     // 4. Update vehicle status based on listing type
+    const { rows: updatedBookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
+    const updatedBooking = updatedBookingRows[0];
+
+    if (!updatedBooking || updatedBooking.payment_status !== 'paid') {
+      return errorResponse(res, 'Payment verification pending. Please try again shortly.', 409);
+    }
+
     const { rows: vehicleRows } = await pool.query('SELECT listing_type FROM vehicles WHERE id = $1', [booking.vehicle_id]);
     const vehicle = vehicleRows[0];
-
     if (vehicle) {
       let newVehicleStatus = 'rented';
       if (vehicle.listing_type === 'sale') {
         newVehicleStatus = 'sold';
       }
-
       await pool.query('UPDATE vehicles SET status = $1 WHERE id = $2', [newVehicleStatus, booking.vehicle_id]);
       console.log(`✅ Vehicle ${booking.vehicle_id} status updated to ${newVehicleStatus}`);
     }
 
     // 5. Fetch and return updated booking
-    const { rows: updatedBookingRows } = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking_id]);
-    const updatedBooking = updatedBookingRows[0];
-
     // 6. Send confirmation emails (Non-blocking)
     try {
       const { rows: fullBookingRows } = await pool.query(`

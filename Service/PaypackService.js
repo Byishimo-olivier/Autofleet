@@ -127,8 +127,12 @@ class PaypackService {
           }
         });
 
-        console.log('✅ Paypack verification successful:', response.data);
-        return response.data;
+        const data = response.data || {};
+        if (!data.status && this.paypackConfig.testMode && data.ref) {
+          data.status = 'completed';
+        }
+        console.log('✅ Paypack verification successful:', data);
+        return data;
       } catch (verifyError) {
         // In test mode, transactions may not be immediately queryable
         if (this.paypackConfig.testMode && verifyError.response?.status === 404) {
@@ -155,16 +159,25 @@ class PaypackService {
    */
   async handlePaypackWebhook(payload) {
     try {
-      const { reference, status, paid_at, amount } = payload;
+      const { reference, status, paid_at, amount, booking_id } = payload;
 
       console.log('📨 Processing Paypack webhook:', { reference, status });
 
-      const bookingResult = await pool.query(
+      let bookingResult = await pool.query(
         `SELECT b.*, v.owner_id FROM bookings b
          LEFT JOIN vehicles v ON b.vehicle_id = v.id
          WHERE b.payment_transaction_id = $1`,
         [reference]
       );
+
+      if (bookingResult.rows.length === 0 && booking_id) {
+        bookingResult = await pool.query(
+          `SELECT b.*, v.owner_id FROM bookings b
+           LEFT JOIN vehicles v ON b.vehicle_id = v.id
+           WHERE b.id = $1`,
+          [booking_id]
+        );
+      }
 
       if (bookingResult.rows.length === 0) {
         console.warn('⚠️  Booking not found for reference:', reference);
@@ -183,17 +196,13 @@ class PaypackService {
         bookingStatus = 'cancelled';
       }
 
-      const gatewayResponse = JSON.stringify(payload);
-
       await pool.query(
         `UPDATE bookings 
          SET payment_status = $1, 
              status = $2, 
-             gateway_response = $3,
-             payment_verified_at = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $4`,
-        [paymentStatus, bookingStatus, gatewayResponse, booking.id]
+         WHERE id = $3`,
+        [paymentStatus, bookingStatus, booking.id]
       );
 
       console.log(
@@ -227,7 +236,7 @@ class PaypackService {
       // Paypack returns { ref, amount, status, kind, created_at }
       const reference = paymentResponse?.ref || paymentResponse?.data?.ref;
 
-      if (reference && !booking.payment_transaction_id) {
+      if (reference && booking.payment_transaction_id !== reference) {
         await pool.query(
           'UPDATE bookings SET payment_transaction_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
           [reference, booking_id]
