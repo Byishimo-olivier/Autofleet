@@ -26,6 +26,24 @@ const getPaypackService = () => {
   return paypackService;
 };
 
+const normalizeRwandaMsisdn = (raw) => {
+  if (!raw) return '';
+  let number = String(raw).trim().replace(/\s+/g, '');
+  if (number.startsWith('+')) {
+    number = number.substring(1);
+  }
+  if (number.startsWith('00')) {
+    number = number.substring(2);
+  }
+  if (number.startsWith('0')) {
+    number = `250${number.substring(1)}`;
+  }
+  if (!number.startsWith('250')) {
+    number = `250${number}`;
+  }
+  return number;
+};
+
 // Get active bookings (confirmed and ongoing)
 router.get('/active', authenticateToken, async (req, res) => {
   const requestingUserId = req.user.id;
@@ -1579,17 +1597,25 @@ router.post('/initiate-payment', authenticateToken, async (req, res) => {
 
   try {
     const paypack = getPaypackService();
+    const normalizedNumber = normalizeRwandaMsisdn(number);
+    if (!/^2507\d{8}$/.test(normalizedNumber)) {
+      return errorResponse(
+        res,
+        'Invalid phone number. Use a Rwanda mobile number like 0788123456 or +250788123456.',
+        400
+      );
+    }
     
     const result = await paypack.createPayment({
       booking_id,
       amount,
-      phone_number: number
+      phone_number: normalizedNumber
     });
 
     // Add USSD/POP message information to response
     const paymentResponse = {
       ...result,
-      message: `✅ Payment initiated! A USSD prompt will be sent to ${number}. Please enter your PIN to confirm the payment.`,
+      message: `✅ Payment initiated! A USSD prompt will be sent to ${normalizedNumber}. Please enter your PIN to confirm the payment.`,
       instructions: {
         step1: 'Check your phone for a payment confirmation message',
         step2: 'A USSD pop-up will appear with payment details',
