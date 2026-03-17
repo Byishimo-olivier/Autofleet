@@ -4,6 +4,7 @@ const pool = require('../config/database');
 const { hashPassword, comparePassword, validateEmail, successResponse, errorResponse } = require('../utils/helpers');
 const { generateToken, authenticateToken } = require('../middleware/auth');
 const EmailService = require('../Service/EmailService'); // Add this import
+const emailService = new EmailService();
 
 // Register new user (ENHANCED with welcome email)
 router.post('/register', async (req, res) => {
@@ -52,7 +53,7 @@ router.post('/register', async (req, res) => {
 
     // 📧 SEND WELCOME EMAIL
     try {
-      await EmailService.sendWelcomeEmail(user);
+      await emailService.sendWelcomeEmail(user);
       console.log('✅ Welcome email sent to new user:', email);
     } catch (emailError) {
       console.error('❌ Failed to send welcome email:', emailError);
@@ -229,11 +230,11 @@ router.put('/profile', authenticateToken, async (req, res) => {
       };
 
       // Send profile update confirmation
-      await EmailService.sendProfileUpdateConfirmation(updatedUser, currentUser);
+      await emailService.sendProfileUpdateConfirmation(updatedUser, currentUser);
 
       // If email changed, send notification to both old and new email
       if (emailChanged) {
-        await EmailService.sendEmailChangeNotification(currentUser.email, email, updatedUser);
+        await emailService.sendEmailChangeNotification(currentUser.email, email, updatedUser);
       }
 
       console.log('✅ Profile update email notifications sent');
@@ -284,7 +285,7 @@ router.put('/change-password', authenticateToken, async (req, res) => {
 
     // 📧 SEND PASSWORD CHANGE NOTIFICATION
     try {
-      await EmailService.sendPasswordChangeNotification(user);
+      await emailService.sendPasswordChangeNotification(user);
       console.log('✅ Password change notification sent to user:', user.email);
     } catch (emailError) {
       console.error('❌ Failed to send password change notification:', emailError);
@@ -331,7 +332,7 @@ router.post('/forgot-password', async (req, res) => {
 
     // 📧 SEND PASSWORD RESET EMAIL
     try {
-      await EmailService.sendPasswordResetEmail(user, resetToken);
+      await emailService.sendPasswordResetEmail(user, resetToken);
       console.log('✅ Password reset email sent to user:', email);
     } catch (emailError) {
       console.error('❌ Failed to send password reset email:', emailError);
@@ -379,7 +380,7 @@ router.post('/reset-password', async (req, res) => {
 
     // 📧 SEND PASSWORD RESET CONFIRMATION
     try {
-      await EmailService.sendPasswordResetConfirmation(user);
+      await emailService.sendPasswordResetConfirmation(user);
       console.log('✅ Password reset confirmation sent to user:', user.email);
     } catch (emailError) {
       console.error('❌ Failed to send password reset confirmation:', emailError);
@@ -406,7 +407,7 @@ router.post('/resend-welcome', authenticateToken, async (req, res) => {
 
     // 📧 RESEND WELCOME EMAIL
     try {
-      await EmailService.sendWelcomeEmail(user);
+      await emailService.sendWelcomeEmail(user);
       console.log('✅ Welcome email resent to user:', user.email);
       successResponse(res, null, 'Welcome email sent successfully');
     } catch (emailError) {
@@ -428,16 +429,16 @@ router.post('/test-email', authenticateToken, async (req, res) => {
     let result;
     switch (emailType) {
       case 'welcome':
-        result = await EmailService.sendWelcomeEmail(user);
+        result = await emailService.sendWelcomeEmail(user);
         break;
       case 'login':
-        result = await EmailService.sendLoginNotification(user);
+        result = await emailService.sendLoginNotification(user);
         break;
       case 'password_change':
-        result = await EmailService.sendPasswordChangeNotification(user);
+        result = await emailService.sendPasswordChangeNotification(user);
         break;
       default:
-        result = await EmailService.sendEmail(user.email, 'Test Email - AutoFleet Hub', '<h1>Test Email</h1><p>Auth email service is working correctly!</p>');
+        result = await emailService.sendEmail(user.email, 'Test Email - AutoFleet Hub', '<h1>Test Email</h1><p>Auth email service is working correctly!</p>');
     }
 
     if (result.success) {

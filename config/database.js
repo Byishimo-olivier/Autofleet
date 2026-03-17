@@ -43,6 +43,9 @@ async function initializeDatabase(client) {
         last_name VARCHAR(100) NOT NULL,
         phone VARCHAR(20),
         role user_role DEFAULT 'customer',
+        reset_token VARCHAR(255),
+        reset_expires TIMESTAMP,
+        last_login TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
@@ -93,6 +96,18 @@ async function initializeDatabase(client) {
     console.log('Running database migrations...');
 
     // Add missing columns if they don't exist
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token VARCHAR(255);
+    `).catch(err => console.log('Migration Note: reset_token column already exists or error:', err.message));
+
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_expires TIMESTAMP;
+    `).catch(err => console.log('Migration Note: reset_expires column already exists or error:', err.message));
+
+    await client.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;
+    `).catch(err => console.log('Migration Note: last_login column already exists or error:', err.message));
+
     await client.query(`
       ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS listing_type VARCHAR(20) DEFAULT 'rent';
     `).catch(err => console.log('Migration Note: listing_type column already exists or error:', err.message));
@@ -181,6 +196,49 @@ async function initializeDatabase(client) {
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Vehicle device keys for tracking updates
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_devices (
+        id SERIAL PRIMARY KEY,
+        vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+        label VARCHAR(100),
+        api_key_hash VARCHAR(64) NOT NULL,
+        is_active BOOLEAN DEFAULT TRUE,
+        last_seen TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Vehicle alert settings per vehicle
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_alert_settings (
+        id SERIAL PRIMARY KEY,
+        vehicle_id INTEGER UNIQUE NOT NULL REFERENCES vehicles(id),
+        alerts_enabled BOOLEAN DEFAULT TRUE,
+        overspeed_enabled BOOLEAN DEFAULT TRUE,
+        geofence_enabled BOOLEAN DEFAULT FALSE,
+        tamper_enabled BOOLEAN DEFAULT TRUE,
+        speed_limit_kmh NUMERIC(5,2),
+        geofence_lat NUMERIC(10,8),
+        geofence_lng NUMERIC(11,8),
+        geofence_radius_m NUMERIC(10,2),
+        alert_cooldown_minutes INTEGER DEFAULT 10,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Vehicle alert events for history
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS vehicle_alert_events (
+        id SERIAL PRIMARY KEY,
+        vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+        booking_id INTEGER REFERENCES bookings(id),
+        type VARCHAR(50) NOT NULL,
+        message TEXT NOT NULL,
+        latitude NUMERIC(10,8),
+        longitude NUMERIC(11,8),
+        speed NUMERIC(5,2),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
     console.log('Database tables initialized');
   } catch (err) {
@@ -190,4 +248,3 @@ async function initializeDatabase(client) {
 }
 
 module.exports = pool;
-

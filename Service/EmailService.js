@@ -6,7 +6,12 @@ class EmailService {
   constructor() {
     this.transporter = this.createTransporter();
     this.from = process.env.SMTP_FROM || 'AutoFleet Hub <noreply@autofleet.com>';
-    this.baseUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+    const rawBaseUrl =
+      process.env.CLIENT_URL ||
+      process.env.FRONTEND_URL ||
+      process.env.PUBLIC_URL ||
+      'http://localhost:5173';
+    this.baseUrl = rawBaseUrl.replace(/\/+$/, '');
   }
 
   createTransporter() {
@@ -122,7 +127,7 @@ class EmailService {
   // Password reset email
   async sendPasswordResetEmail(user, resetToken) {
     const subject = 'Reset Your Password - AutoFleet Hub';
-    const resetUrl = `${this.baseUrl}/reset-password?token=${resetToken}`;
+    const resetUrl = `${this.baseUrl}/reset-password/${resetToken}`;
     
     const html = `
       <!DOCTYPE html>
@@ -220,6 +225,159 @@ class EmailService {
       </html>
     `;
 
+    return await this.sendEmail(user.email, subject, html);
+  }
+
+  // Profile update confirmation
+  async sendProfileUpdateConfirmation(updatedUser, previousUser) {
+    const subject = 'Profile Updated - AutoFleet Hub';
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #2c3e7d; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Profile Updated</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${updatedUser.first_name}!</h2>
+            <p>Your profile information was updated successfully.</p>
+            <p>If you did not make this change, please contact support.</p>
+          </div>
+          <div class="footer">
+            <p>If you have any questions, contact us at support@autofleet.com</p>
+            <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    return await this.sendEmail(updatedUser.email, subject, html);
+  }
+
+  // Email change notification (send to old and new email)
+  async sendEmailChangeNotification(oldEmail, newEmail, user) {
+    const subject = 'Email Updated - AutoFleet Hub';
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #2c3e7d; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Email Changed</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${user.first_name}!</h2>
+            <p>Your account email has been updated to ${newEmail}.</p>
+            <p>If you did not make this change, please contact support immediately.</p>
+          </div>
+          <div class="footer">
+            <p>If you have any questions, contact us at support@autofleet.com</p>
+            <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+    await this.sendEmail(oldEmail, subject, html);
+    return await this.sendEmail(newEmail, subject, html);
+  }
+
+  // Password change notification (alias)
+  async sendPasswordChangeNotification(user) {
+    return await this.sendPasswordChangeConfirmation(user);
+  }
+
+  // Password reset confirmation
+  async sendPasswordResetConfirmation(user) {
+    const subject = 'Password Reset Successful - AutoFleet Hub';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #28a745; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Password Reset Successful</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${user.first_name}!</h2>
+            <p>Your password has been reset successfully.</p>
+            <p>If you did not perform this action, please contact support immediately.</p>
+            <a href="${this.baseUrl}/login" class="button">Sign In</a>
+          </div>
+          <div class="footer">
+            <p>If you have any questions, contact us at support@autofleet.com</p>
+            <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    return await this.sendEmail(user.email, subject, html);
+  }
+
+  // Login notification
+  async sendLoginNotification(user) {
+    const subject = 'New Login Detected - AutoFleet Hub';
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { font-family: Arial, sans-serif; color: #333; }
+          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+          .header { background: #2c3e7d; color: white; padding: 20px; text-align: center; }
+          .content { padding: 20px; background: #f9f9f9; }
+          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>Login Alert</h1>
+          </div>
+          <div class="content">
+            <h2>Hello ${user.first_name}!</h2>
+            <p>We noticed a login to your account on ${new Date().toLocaleString()}.</p>
+            <p>If this was not you, please reset your password immediately.</p>
+          </div>
+          <div class="footer">
+            <p>If you have any questions, contact us at support@autofleet.com</p>
+            <p>&copy; ${new Date().getFullYear()} AutoFleet Hub. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
     return await this.sendEmail(user.email, subject, html);
   }
 
