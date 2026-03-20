@@ -114,7 +114,8 @@ router.get('/', async (req, res) => {
       sortBy = 'created_at',
       sortOrder = 'DESC',
       listing_type,
-      ownerOnly = false // New parameter to filter by current owner
+      ownerOnly = false, // New parameter to filter by current owner
+      includeAllPublic = false
     } = req.query;
 
     const offset = (page - 1) * limit;
@@ -162,6 +163,8 @@ router.get('/', async (req, res) => {
 
     // Filter by owner if ownerOnly is true and user is authenticated
     const userId = req.headers['x-user-id'] || (req.user ? req.user.id : null);
+    const shouldIncludeAllPublic = includeAllPublic === 'true' || includeAllPublic === true;
+
     if (ownerOnly === 'true' || ownerOnly === true) {
       if (userId) {
         sql += ` AND v.owner_id = $${idx}`;
@@ -173,7 +176,7 @@ router.get('/', async (req, res) => {
       // This part depends on how we distinguish customer requests. 
       // Usually, if there's no owner-id or admin check, it's a public/customer view.
       const isAdmin = req.user && req.user.role === 'admin';
-      if (!isAdmin) {
+      if (!isAdmin && !shouldIncludeAllPublic) {
         // Only show vehicles where owner has active subscription OR the owner is an admin (system vehicles)
         sql += ` AND (
           EXISTS (
@@ -288,7 +291,7 @@ router.get('/', async (req, res) => {
 
     // Filter out vehicles with expired subscriptions for public view
     const isAdmin = req.user && req.user.role === 'admin';
-    if (!isAdmin) {
+    if (!isAdmin && !shouldIncludeAllPublic) {
       countSql += ` AND (
         EXISTS (
           SELECT 1 FROM subscriptions s 
