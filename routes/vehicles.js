@@ -150,17 +150,39 @@ router.get('/', async (req, res) => {
     }
 
     let sql = `SELECT v.*, u.first_name as owner_first_name, u.last_name as owner_last_name, u.phone as owner_phone, 
-      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
+      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count,
+      EXISTS (
+        SELECT 1 FROM subscriptions s 
+        WHERE s.user_id = v.owner_id 
+        AND s.status = 'active' 
+        AND s.end_date > CURRENT_TIMESTAMP
+      ) as owner_has_active_subscription
       ${isBookedSql}
       FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1`;
 
     // Filter by owner if ownerOnly is true and user is authenticated
+    const userId = req.headers['x-user-id'] || (req.user ? req.user.id : null);
     if (ownerOnly === 'true' || ownerOnly === true) {
-      const userId = req.headers['x-user-id']; // Pass user ID from frontend
       if (userId) {
         sql += ` AND v.owner_id = $${idx}`;
         params.push(parseInt(userId));
         idx++;
+      }
+    } else {
+      // If not ownerOnly, and not admin, hide vehicles with expired subscriptions
+      // This part depends on how we distinguish customer requests. 
+      // Usually, if there's no owner-id or admin check, it's a public/customer view.
+      const isAdmin = req.user && req.user.role === 'admin';
+      if (!isAdmin) {
+        // Only show vehicles where owner has active subscription OR the owner is an admin (system vehicles)
+        sql += ` AND (
+          EXISTS (
+            SELECT 1 FROM subscriptions s 
+            WHERE s.user_id = v.owner_id 
+            AND s.status = 'active' 
+            AND s.end_date > CURRENT_TIMESTAMP
+          ) OR u.role = 'admin'
+        )`;
       }
     }
 
@@ -260,9 +282,22 @@ router.get('/', async (req, res) => {
     });
 
     // Updated count query to match all filters
-    let countSql = 'SELECT COUNT(*) as total FROM vehicles v WHERE 1=1';
+    let countSql = 'SELECT COUNT(*) as total FROM vehicles v LEFT JOIN users u ON v.owner_id = u.id WHERE 1=1';
     let countParams = [];
     let countIdx = 1;
+
+    // Filter out vehicles with expired subscriptions for public view
+    const isAdmin = req.user && req.user.role === 'admin';
+    if (!isAdmin) {
+      countSql += ` AND (
+        EXISTS (
+          SELECT 1 FROM subscriptions s 
+          WHERE s.user_id = v.owner_id 
+          AND s.status = 'active' 
+          AND s.end_date > CURRENT_TIMESTAMP
+        ) OR u.role = 'admin'
+      )`;
+    }
 
     // Add the same filters as the main query
     if (status) { countSql += ` AND v.status = $${countIdx++}`; countParams.push(status); }
@@ -375,11 +410,31 @@ router.get('/featured', async (req, res) => {
       ) as is_booked_on_dates`;
     }
 
-    // Build dynamic SQL query with filters
+    // Build dynamic SQL query with filters including subscription check
     let sql = `SELECT v.*, 
-      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count
+      (SELECT COUNT(*) FROM bookings b WHERE b.vehicle_id = v.id) as bookings_count,
+      EXISTS (
+        SELECT 1 FROM subscriptions s 
+        WHERE s.user_id = v.owner_id 
+        AND s.status = 'active' 
+        AND s.end_date > CURRENT_TIMESTAMP
+      ) as owner_has_active_subscription
       ${isBookedSql}
-      FROM vehicles v WHERE (v.status = 'available' OR v.status = 'rented')`;
+      FROM vehicles v 
+      JOIN users u ON v.owner_id = u.id
+      WHERE (v.status = 'available' OR v.status = 'rented')`;
+
+    // Filter out vehicles with expired subscriptions for public view
+    if (!req.user || req.user.role !== 'admin') {
+      sql += ` AND (
+        EXISTS (
+          SELECT 1 FROM subscriptions s 
+          WHERE s.user_id = v.owner_id 
+          AND s.status = 'active' 
+          AND s.end_date > CURRENT_TIMESTAMP
+        ) OR u.role = 'admin'
+      )`;
+    }
 
     if (minPrice) {
       sql += ` AND (
@@ -419,9 +474,21 @@ router.get('/featured', async (req, res) => {
     console.log('Applied filters:', { type, location, pickupDate, returnDate, minPrice, maxPrice, search });
 
     // Get total count for pagination (same filters)
-    let countSql = `SELECT COUNT(*) FROM vehicles v WHERE v.status = 'available'`;
+    let countSql = `SELECT COUNT(*) FROM vehicles v JOIN users u ON v.owner_id = u.id WHERE v.status = 'available'`;
     let countParams = [];
     let countIdx = 1;
+
+    // Subscription check for count
+    if (!req.user || req.user.role !== 'admin') {
+      countSql += ` AND (
+        EXISTS (
+          SELECT 1 FROM subscriptions s 
+          WHERE s.user_id = v.owner_id 
+          AND s.status = 'active' 
+          AND s.end_date > CURRENT_TIMESTAMP
+        ) OR u.role = 'admin'
+      )`;
+    }
 
     if (type) { countSql += ` AND v.type = $${countIdx++}`; countParams.push(type); }
     if (location) { countSql += ` AND v.location_address ILIKE $${countIdx++}`; countParams.push(`%${location}%`); }

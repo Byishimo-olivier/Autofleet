@@ -81,11 +81,17 @@ try {
   console.log("Loading /api/admin...");
   app.use('/api/admin', require('./routes/admin'));
 
+  console.log("Loading /api/work-orders...");
+  app.use('/api/work-orders', require('./routes/workOrders'));
+
   console.log("Loading /api/ai...");
   app.use('/api/ai', require('./routes/ai'));
 
   console.log("Loading /api/tracking...");
   app.use('/api/tracking', require('./routes/tracking'));
+
+  console.log("Loading /api/subscriptions...");
+  app.use('/api/subscriptions', require('./routes/subscriptions'));
 
   console.log("All routes loaded successfully!");
 

@@ -159,10 +159,11 @@ class PaypackService {
    */
   async handlePaypackWebhook(payload) {
     try {
-      const { reference, status, paid_at, amount, booking_id } = payload;
+      const { reference, status, paid_at, amount, booking_id, subscription_id } = payload;
 
       console.log('📨 Processing Paypack webhook:', { reference, status });
 
+      // 1. Try to find a booking with this reference
       let bookingResult = await pool.query(
         `SELECT b.*, v.owner_id FROM bookings b
          LEFT JOIN vehicles v ON b.vehicle_id = v.id
@@ -179,38 +180,77 @@ class PaypackService {
         );
       }
 
-      if (bookingResult.rows.length === 0) {
-        console.warn('⚠️  Booking not found for reference:', reference);
-        return;
+      if (bookingResult.rows.length > 0) {
+        const booking = bookingResult.rows[0];
+        let paymentStatus = 'pending';
+        let bookingStatus = 'pending';
+
+        if (status === 'completed' || status === 'successful') {
+          paymentStatus = 'paid';
+          bookingStatus = 'confirmed';
+        } else if (status === 'failed') {
+          paymentStatus = 'failed';
+          bookingStatus = 'cancelled';
+        }
+
+        await pool.query(
+          `UPDATE bookings
+           SET payment_status = $1,
+               status = $2,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $3`,
+          [paymentStatus, bookingStatus, booking.id]
+        );
+
+        console.log(
+          `✅ Booking #${booking.id} updated: status=${bookingStatus}, payment=${paymentStatus}`
+        );
+        return booking;
       }
 
-      const booking = bookingResult.rows[0];
-      let paymentStatus = 'pending';
-      let bookingStatus = 'pending';
+      // 2. If not a booking, try to find a subscription with this reference
+      let subscriptionResult = await pool.query(
+        'SELECT * FROM subscriptions WHERE payment_transaction_id = $1',
+        [reference]
+      );
 
-      if (status === 'completed' || status === 'successful') {
-        paymentStatus = 'paid';
-        bookingStatus = 'confirmed';
-      } else if (status === 'failed') {
-        paymentStatus = 'failed';
-        bookingStatus = 'cancelled';
+      if (subscriptionResult.rows.length === 0 && subscription_id) {
+        subscriptionResult = await pool.query(
+          'SELECT * FROM subscriptions WHERE id = $1',
+          [subscription_id]
+        );
       }
 
-      await pool.query(
-        `UPDATE bookings 
-         SET payment_status = $1, 
-             status = $2, 
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = $3`,
-        [paymentStatus, bookingStatus, booking.id]
-      );
+      if (subscriptionResult.rows.length > 0) {
+        const sub = subscriptionResult.rows[0];
+        let subStatus = 'pending';
+        let startDate = null;
+        let endDate = null;
 
-      console.log(
-        `✅ Booking #${booking.id} updated: status=${bookingStatus}, payment=${paymentStatus}`
-      );
+        if (status === 'completed' || status === 'successful') {
+          subStatus = 'active';
+          startDate = new Date();
+          endDate = new Date();
+          endDate.setMonth(endDate.getMonth() + 1); // Default to 1 month
+        } else if (status === 'failed') {
+          subStatus = 'failed';
+        }
 
-      const updatedBooking = await pool.query('SELECT * FROM bookings WHERE id = $1', [booking.id]);
-      return updatedBooking.rows[0];
+        await pool.query(
+          `UPDATE subscriptions
+           SET status = $1,
+               start_date = $2,
+               end_date = $3,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $4`,
+          [subStatus, startDate, endDate, sub.id]
+        );
+
+        console.log(`✅ Subscription #${sub.id} updated: status=${subStatus}`);
+        return sub;
+      }
+
+      console.warn('⚠️  No booking or subscription found for reference:', reference);
     } catch (error) {
       console.error('❌ Webhook processing failed:', error.message);
       throw error;

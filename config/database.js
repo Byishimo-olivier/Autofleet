@@ -240,6 +240,71 @@ async function initializeDatabase(client) {
       )
     `);
 
+    // Work Orders Types
+    await client.query(`
+      CREATE TYPE work_order_status AS ENUM ('Open', 'In Progress', 'On Hold', 'Complete');
+    `).catch(() => { });
+    await client.query(`
+      CREATE TYPE work_order_priority AS ENUM ('Low', 'Medium', 'High', 'Urgent');
+    `).catch(() => { });
+    
+    // Work Order Templates
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS work_order_templates (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        location VARCHAR(255),
+        vendor_id INTEGER REFERENCES users(id),
+        customer_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Work Orders
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS work_orders (
+        id SERIAL PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        location VARCHAR(255),
+        status work_order_status DEFAULT 'Open',
+        priority work_order_priority DEFAULT 'Medium',
+        assignee_id INTEGER REFERENCES users(id),
+        vehicle_id INTEGER REFERENCES vehicles(id),
+        template_id INTEGER REFERENCES work_order_templates(id),
+        vendor_id INTEGER REFERENCES users(id),
+        customer_id INTEGER REFERENCES users(id),
+        due_date TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Subscriptions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        plan_name VARCHAR(50) NOT NULL,
+        amount NUMERIC(10,2) NOT NULL,
+        status VARCHAR(20) DEFAULT 'pending',
+        payment_transaction_id VARCHAR(255),
+        start_date TIMESTAMP,
+        end_date TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Work Orders migrations
+    await client.query(`ALTER TYPE user_role ADD VALUE 'vendor';`).catch(() => {});
+    await client.query(`ALTER TABLE work_order_templates ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id);`).catch(() => {});
+    await client.query(`ALTER TABLE work_order_templates ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES users(id);`).catch(() => {});
+    await client.query(`ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS vendor_id INTEGER REFERENCES users(id);`).catch(() => {});
+    await client.query(`ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS customer_id INTEGER REFERENCES users(id);`).catch(() => {});
+
     console.log('Database tables initialized');
   } catch (err) {
     console.error('Error initializing database:', err);
