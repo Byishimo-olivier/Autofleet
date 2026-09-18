@@ -1,5 +1,4 @@
 const jwt = require('jsonwebtoken');
-const db = require('../config/database');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'autofleet_secret_key_2024';
 

@@ -7,8 +7,20 @@ const PaypackService = require('../Service/PaypackService');
 const FlutterwaveService = require('../Service/FlutterwaveService');
 
 
-const paypackService = new PaypackService();
-const flutterwaveService = new FlutterwaveService();
+// Payment services are kept for later use but are initialized only when a
+// payment endpoint is called, so free-access mode can start without credentials.
+let paypackService;
+let flutterwaveService;
+
+const getPaypackService = () => {
+  if (!paypackService) paypackService = new PaypackService();
+  return paypackService;
+};
+
+const getFlutterwaveService = () => {
+  if (!flutterwaveService) flutterwaveService = new FlutterwaveService();
+  return flutterwaveService;
+};
 
 const SUBSCRIPTION_PLANS = [
   { id: 'basic', name: 'Basic Plan', amount: 50000, description: 'Up to 5 vehicles' },
@@ -53,7 +65,7 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
     if (paymentMethod === 'card') {
       // Initiate Flutterwave Card Payment
       const tx_ref = `SUB_${subscriptionId}_${Date.now()}`;
-      const flwResponse = await flutterwaveService.initiatePayment({
+      const flwResponse = await getFlutterwaveService().initiatePayment({
         amount: plan.amount,
         currency: 'RWF',
         email: req.user.email,
@@ -79,7 +91,7 @@ router.post('/subscribe', authenticateToken, async (req, res) => {
       }
     } else {
       // Initiate Paypack Mobile Money Payment
-      const paymentResponse = await paypackService.requestPayment(plan.amount, phoneNumber);
+      const paymentResponse = await getPaypackService().requestPayment(plan.amount, phoneNumber);
       const reference = paymentResponse?.ref || paymentResponse?.data?.ref;
 
       if (reference) {
@@ -111,7 +123,7 @@ router.get('/verify-flw', authenticateToken, async (req, res) => {
       return errorResponse(res, 'Missing transaction_id', 400);
     }
 
-    const verificationData = await flutterwaveService.verifyTransaction(transaction_id);
+    const verificationData = await getFlutterwaveService().verifyTransaction(transaction_id);
 
     if (verificationData.status === 'success' && verificationData.data.status === 'successful') {
       // Extract subscription ID from tx_ref (SUB_ID_TIME)

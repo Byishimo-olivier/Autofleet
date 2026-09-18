@@ -41,11 +41,11 @@ try {
 
   // Load main vehicles router (all other vehicle routes)
   console.log("Loading /api/vehicles...");
-  app.use('/api/vehicles', require('./routes/vehicles'));
+  app.use('/api/vehicles', require('./routes/vehicles-mongodb'));
   console.log("Registered /api/vehicles");
 
   console.log("Loading /api/auth...");
-  app.use('/api/auth', require('./routes/auth'));
+  app.use('/api/auth', require('./routes/auth-mongodb'));
   console.log("Registered /api/auth");
 
   console.log("Loading /api/users...");
@@ -168,6 +168,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`========================================`);
 });
 
+// Payment synchronization remains available for later, but is disabled by
+// default while the application is operating in free-access mode.
 startPaypackAutoSync();
 
 module.exports = app;

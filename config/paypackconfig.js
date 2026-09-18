@@ -9,7 +9,7 @@ const paypackConfig = {
 };
 
 if (!paypackConfig.apiKey || !paypackConfig.apiSecret) {
-  console.error('❌ Missing Paypack credentials in .env: PAYPACK_API_KEY and PAYPACK_API_SECRET are required');
+  console.log('ℹ️ Paypack is disabled for free-access mode; payment code is retained for later use');
 } else {
   console.log('✅ Paypack Config loaded:', {
     apiKey: paypackConfig.apiKey,

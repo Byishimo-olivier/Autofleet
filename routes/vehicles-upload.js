@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const pool = require('../config/database');
+const { connectMongo, toObjectId } = require('../config/mongodb');
 const { authenticateToken, requireOwnerOrAdmin } = require('../middleware/auth');
 
 console.log('[vehicles-upload.js] Router loaded');
@@ -110,19 +110,16 @@ router.post('/upload/:id', authenticateToken, requireOwnerOrAdmin, vehicleUpload
     }
 
     // Verify ownership - check if vehicle belongs to user or user is admin
-    const vehicleCheck = await pool.query('SELECT owner_id FROM vehicles WHERE id = $1', [vehicleId]);
-    if (vehicleCheck.rows.length === 0) {
+    const database = await connectMongo();
+    const vehicles = database.collection('vehicles');
+    const objectId = toObjectId(vehicleId);
+    const vehicle = objectId ? await vehicles.findOne({ _id: objectId }) : null;
+    if (!vehicle) {
       return res.status(404).json({ error: 'Vehicle not found' });
     }
 
-    const vehicle = vehicleCheck.rows[0];
-    if (userRole !== 'admin' && vehicle.owner_id !== userId) {
-      // Try comparing as numbers in case of type mismatch
-      const ownerIdNum = parseInt(vehicle.owner_id);
-      const userIdNum = parseInt(userId);
-      if (ownerIdNum !== userIdNum) {
-        return res.status(403).json({ error: 'Access denied: You can only upload images for your own vehicles' });
-      }
+    if (userRole !== 'admin' && vehicle.owner_id?.toString() !== userId) {
+      return res.status(403).json({ error: 'Access denied: You can only upload images for your own vehicles' });
     }
 
     // Build image paths - handle both Cloudinary and local storage
@@ -149,23 +146,15 @@ router.post('/upload/:id', authenticateToken, requireOwnerOrAdmin, vehicleUpload
       return res.status(400).json({ error: 'Failed to process uploaded images' });
     }
 
-    // Fetch current images array from DB
-    const result = await pool.query('SELECT images FROM vehicles WHERE id = $1', [vehicleId]);
-    let currentImages = [];
-    if (result.rows.length > 0 && result.rows[0].images) {
-      try {
-        currentImages = JSON.parse(result.rows[0].images);
-        if (!Array.isArray(currentImages)) currentImages = [];
-      } catch (e) {
-        currentImages = [];
-      }
-    }
+    const currentImages = Array.isArray(vehicle.images) ? vehicle.images : [];
 
     // Merge new images with existing
     const updatedImages = [...currentImages, ...imagePaths];
     
-    // Update database
-    await pool.query('UPDATE vehicles SET images = $1 WHERE id = $2', [JSON.stringify(updatedImages), vehicleId]);
+    await vehicles.updateOne(
+      { _id: objectId },
+      { $set: { images: updatedImages, updated_at: new Date() } }
+    );
     
     console.log('✅ Images saved successfully. Total images:', updatedImages.length);
     res.json({ 

@@ -10,7 +10,18 @@ const pool = new Pool({
   ssl: process.env.PGHOST && process.env.PGHOST.includes('render.com') ? { rejectUnauthorized: false } : false,
 });
 
-(async () => {
+if (process.env.ENABLE_POSTGRES_BOOTSTRAP !== 'true') {
+  pool.query = async () => {
+    throw new Error('PostgreSQL is disabled. Convert this route to MongoDB before using it.');
+  };
+}
+
+pool.on('error', (err) => {
+  console.error('PostgreSQL pool error:', err.message);
+});
+
+if (process.env.ENABLE_POSTGRES_BOOTSTRAP === 'true') {
+  (async () => {
   const client = await pool.connect();
   try {
     console.log('Connected to PostgreSQL database');
@@ -27,8 +38,15 @@ const pool = new Pool({
   } finally {
     client.release();
   }
-})();
-console.log('Connected to PostgreSQL database');
+  })().catch((err) => {
+    console.error('PostgreSQL bootstrap failed:', err.message);
+  });
+}
+console.log(
+  process.env.ENABLE_POSTGRES_BOOTSTRAP === 'true'
+    ? 'PostgreSQL bootstrap enabled'
+    : 'PostgreSQL connection deferred; MongoDB is the active database'
+);
 async function initializeDatabase(client) {
   try {
     await client.query(`

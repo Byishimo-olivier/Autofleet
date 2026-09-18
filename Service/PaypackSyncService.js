@@ -12,7 +12,7 @@ const parseInterval = () => {
 const shouldRun = () => {
   if (process.env.NODE_ENV === 'test') return false;
   const flag = process.env.PAYPACK_AUTO_SYNC;
-  return flag === undefined || String(flag).toLowerCase() !== 'false';
+  return flag !== undefined && String(flag).toLowerCase() === 'true';
 };
 
 const syncPendingPayments = async () => {

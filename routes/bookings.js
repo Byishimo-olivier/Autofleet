@@ -945,7 +945,9 @@ router.put('/:id/status', authenticateToken, async (req, res) => {
       return errorResponse(res, 'Access denied or invalid status transition', 403);
     }
 
-    if (['confirmed', 'active', 'completed'].includes(status) && booking.payment_status !== 'paid') {
+    // Payment verification is intentionally disabled for free-access mode.
+    // Keep this block for later by setting FREE_ACCESS_MODE=false.
+    if (process.env.FREE_ACCESS_MODE !== 'true' && ['confirmed', 'active', 'completed'].includes(status) && booking.payment_status !== 'paid') {
       try {
         if (booking.payment_method === 'mobile' && booking.payment_transaction_id) {
           const paypack = getPaypackService();
@@ -1059,7 +1061,8 @@ router.post('/:id/payment', authenticateToken, async (req, res) => {
   const { paymentMethod, transactionId } = req.body;
   const requestingUserId = req.user.id;
 
-  if (!paymentMethod) {
+  // Payment is optional while FREE_ACCESS_MODE is enabled.
+  if (!paymentMethod && process.env.FREE_ACCESS_MODE !== 'true') {
     return errorResponse(res, 'Payment method is required', 400);
   }
 
@@ -1223,17 +1226,17 @@ router.post('/', authenticateToken, async (req, res) => {
   const customer_id = req.user.id;
 
   // Validation (dates optional for now, will validate after fetching vehicle)
-  if (!vehicle_id || !pickup_location || !payment_method) {
-    return errorResponse(res, 'Missing required fields: vehicle_id, pickup_location, payment_method', 400);
+  if (!vehicle_id || !pickup_location || (process.env.FREE_ACCESS_MODE !== 'true' && !payment_method)) {
+    return errorResponse(res, 'Missing required fields: vehicle_id and pickup_location', 400);
   }
 
-  // Validate payment method
-  if (!['mobile', 'card'].includes(payment_method)) {
+  // Payment method validation is kept for paid mode and intentionally bypassed
+  // for free users.
+  if (process.env.FREE_ACCESS_MODE !== 'true' && !['mobile', 'card'].includes(payment_method)) {
     return errorResponse(res, 'Invalid payment method. Must be "mobile" or "card"', 400);
   }
 
-  // Validate payment details based on method
-  if (payment_method === 'mobile' && !telephone) {
+  if (process.env.FREE_ACCESS_MODE !== 'true' && payment_method === 'mobile' && !telephone) {
     return errorResponse(res, 'Telephone number is required for mobile payment', 400);
   }
 
@@ -1312,10 +1315,11 @@ router.post('/', authenticateToken, async (req, res) => {
     const transactionId = `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Prepare payment details as JSON for storage
+    const effectivePaymentMethod = process.env.FREE_ACCESS_MODE === 'true' ? 'free' : payment_method;
     const paymentDetails = {
-      method: payment_method,
-      ...(payment_method === 'mobile' && { telephone }),
-      ...(payment_method === 'card' && { provider: 'Flutterwave' }),
+      method: effectivePaymentMethod,
+      ...(effectivePaymentMethod === 'mobile' && { telephone }),
+      ...(effectivePaymentMethod === 'card' && { provider: 'Flutterwave' }),
       ...(flw_transaction_id && { flw_transaction_id })
     };
 
@@ -1343,9 +1347,9 @@ router.post('/', authenticateToken, async (req, res) => {
       finalReturnDate,
       total_price,
       'pending', // Initial status
-      'pending', // Payment status
-      payment_method,
-      transactionId,
+      process.env.FREE_ACCESS_MODE === 'true' ? 'paid' : 'pending',
+      effectivePaymentMethod,
+      process.env.FREE_ACCESS_MODE === 'true' ? `FREE_${transactionId}` : transactionId,
       pickup_location
     ]);
 
